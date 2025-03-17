@@ -8,6 +8,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 near-sdk = { version = "5.9.0", features = ["legacy", "unit-testing"] }
-near-gas = "0.3.0"
+near-gas = "=0.3.0"
 borsh = "1.5.5"
 borsh-derive = "1.5.5"
+cargo-near = "0.13.4"
+
+[target.wasm32-unknown-unknown.dependencies]
+getrandom = { version = "0.2.15", features = ["js"] }
