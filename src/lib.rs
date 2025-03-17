@@ -1,12 +1,7 @@
 // Core NEAR SDK imports providing essential blockchain functionality
 use near_sdk::{env, near, AccountId, NearToken, Promise, PanicOnDefault, PromiseResult};
-// Collection type for persistent storage of account creation data
 use near_sdk::collections::LookupMap;
-// JSON-serializable wrapper for large numbers (e.g., yoctoNEAR amounts)
 use near_sdk::json_types::U128;
-// Borsh serialization/deserialization for contract state persistence
-use borsh::{self, BorshSerialize, BorshDeserialize};
-// Gas units for managing transaction costs
 use near_gas::NearGas;
 
 // Constants defining token amounts and gas limits for account creation
@@ -17,12 +12,17 @@ const EXTRA_STORAGE_COST: NearToken = NearToken::from_yoctonear(10_000_000_000_0
 const CALLBACK_GAS: NearGas = NearGas::from_tgas(100); // 100 TGas for callbacks, (typical usage <50 TGas)
 const PENDING_BLOCK_HEIGHT: u64 = u64::MAX; // Special value marking accounts as pending creation
 
+/// Define the external contract interface for callbacks
+#[near_sdk::ext_contract(ext_self)]
+pub trait ExtSelf {
+    fn on_account_created(&mut self, new_account_id: AccountId, transferred_balance: NearToken);
+}
+
 /// OnSocialRelayer: A NEAR smart contract for creating subaccounts and top-level accounts.
 /// - Sponsors 0.1 NEAR for .onsocial.near subaccounts on Mainnet.
 /// - Uses configurable balances (default 0.01 NEAR for Testnet, 0.1 NEAR for top-level).
 /// - Tracks creation status with callbacks and logs events using NEP-297.
 #[near]
-#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct OnSocialRelayer {
     created_accounts: LookupMap<AccountId, u64>, // Stores account IDs mapped to creation block height (or PENDING_BLOCK_HEIGHT)
     subaccount_balance: NearToken, // Configurable funding amount for subaccounts, defaults to 0.01 NEAR
@@ -68,9 +68,9 @@ impl OnSocialRelayer {
             .add_full_access_key(parsed_key)
             .transfer(transfer_amount)
             .then(
-                Self::ext(env::current_account_id())
+                ext_self::ext(env::current_account_id())
                     .with_static_gas(CALLBACK_GAS)
-                    .on_account_created(new_account_id, transfer_amount)
+                    .on_account_created(new_account_id, transfer_amount),
             )
     }
 
@@ -94,9 +94,9 @@ impl OnSocialRelayer {
             .add_full_access_key(parsed_key)
             .transfer(self.toplevel_balance)
             .then(
-                Self::ext(env::current_account_id())
+                ext_self::ext(env::current_account_id())
                     .with_static_gas(CALLBACK_GAS)
-                    .on_account_created(new_account_id, self.toplevel_balance)
+                    .on_account_created(new_account_id, self.toplevel_balance),
             )
     }
 
@@ -163,7 +163,9 @@ impl OnSocialRelayer {
 
     /// Checks if an account has been successfully created (i.e., not pending).
     pub fn has_created_account(&self, account: AccountId) -> bool {
-        self.created_accounts.get(&account).map_or(false, |height| height != PENDING_BLOCK_HEIGHT)
+        self.created_accounts
+            .get(&account)
+            .map_or(false, |height| height != PENDING_BLOCK_HEIGHT)
     }
 
     /// Returns the contract’s current NEAR balance in yoctoNEAR.
@@ -181,7 +183,9 @@ impl OnSocialRelayer {
         let account_str = account_id.as_str();
         let parent_str = parent_account;
         assert!(
-            account_str.ends_with(parent_str) && account_str.len() > parent_str.len() && account_str[..account_str.len() - parent_str.len()].ends_with("."),
+            account_str.ends_with(parent_str)
+                && account_str.len() > parent_str.len()
+                && account_str[..account_str.len() - parent_str.len()].ends_with("."),
             "Sub-account must be a valid subaccount of '{}'",
             parent_str
         );
@@ -190,7 +194,11 @@ impl OnSocialRelayer {
     /// Ensures a top-level account ID isn’t a subaccount of the relayer and meets length requirements.
     fn validate_toplevel_id(account_id: &AccountId) {
         let current = env::current_account_id();
-        let suffix = if current.as_str().ends_with(".testnet") { "testnet" } else { "near" };
+        let suffix = if current.as_str().ends_with(".testnet") {
+            "testnet"
+        } else {
+            "near"
+        };
         assert!(
             !account_id.as_str().ends_with(&format!(".{}", current.as_str())),
             "Use create_account for {}.{} sub-accounts",
@@ -226,7 +234,7 @@ impl OnSocialRelayer {
     /// Calculates the total NEAR required for account creation, including storage costs.
     fn calculate_required_balance(&self, base_balance: NearToken) -> NearToken {
         let storage_cost = NearToken::from_yoctonear(
-            env::storage_usage() as u128 * env::storage_byte_cost().as_yoctonear()
+            env::storage_usage() as u128 * env::storage_byte_cost().as_yoctonear(),
         );
         base_balance
             .saturating_add(storage_cost)
@@ -312,9 +320,18 @@ mod tests {
         );
         testing_env!(context);
         let contract = OnSocialRelayer::new();
-        assert_eq!(contract.get_owner(), "relayer.onsocial.testnet".parse::<AccountId>().unwrap());
-        assert_eq!(contract.get_subaccount_balance().0, MINIMUM_SUBACCOUNT_BALANCE.as_yoctonear());
-        assert_eq!(contract.get_toplevel_balance().0, MINIMUM_TOPLEVEL_BALANCE.as_yoctonear());
+        assert_eq!(
+            contract.get_owner(),
+            "relayer.onsocial.testnet".parse::<AccountId>().unwrap()
+        );
+        assert_eq!(
+            contract.get_subaccount_balance().0,
+            MINIMUM_SUBACCOUNT_BALANCE.as_yoctonear()
+        );
+        assert_eq!(
+            contract.get_toplevel_balance().0,
+            MINIMUM_TOPLEVEL_BALANCE.as_yoctonear()
+        );
     }
 
     #[test]
@@ -489,7 +506,10 @@ mod tests {
         let mut contract = OnSocialRelayer::new();
 
         contract.set_subaccount_balance(U128(20_000_000_000_000_000_000_000));
-        assert_eq!(contract.get_subaccount_balance().0, 20_000_000_000_000_000_000_000);
+        assert_eq!(
+            contract.get_subaccount_balance().0,
+            20_000_000_000_000_000_000_000
+        );
     }
 
     #[test]
@@ -503,7 +523,10 @@ mod tests {
         );
         testing_env!(init_context);
         let mut contract = OnSocialRelayer::new();
-        assert_eq!(contract.get_owner(), "relayer.onsocial.testnet".parse::<AccountId>().unwrap());
+        assert_eq!(
+            contract.get_owner(),
+            "relayer.onsocial.testnet".parse::<AccountId>().unwrap()
+        );
 
         let call_context = setup_context(
             accounts(1),
@@ -542,7 +565,10 @@ mod tests {
         let mut contract = OnSocialRelayer::new();
 
         contract.set_toplevel_balance(U128(200_000_000_000_000_000_000_000));
-        assert_eq!(contract.get_toplevel_balance().0, 200_000_000_000_000_000_000_000);
+        assert_eq!(
+            contract.get_toplevel_balance().0,
+            200_000_000_000_000_000_000_000
+        );
     }
 
     #[test]
@@ -556,7 +582,10 @@ mod tests {
         );
         testing_env!(init_context);
         let mut contract = OnSocialRelayer::new();
-        assert_eq!(contract.get_owner(), "relayer.onsocial.testnet".parse::<AccountId>().unwrap());
+        assert_eq!(
+            contract.get_owner(),
+            "relayer.onsocial.testnet".parse::<AccountId>().unwrap()
+        );
 
         let call_context = setup_context(
             accounts(1),
@@ -699,7 +728,10 @@ mod tests {
         );
         testing_env!(context);
         let contract = OnSocialRelayer::new();
-        assert_eq!(contract.get_contract_balance().0, NearToken::from_near(5).as_yoctonear());
+        assert_eq!(
+            contract.get_contract_balance().0,
+            NearToken::from_near(5).as_yoctonear()
+        );
     }
 
     #[test]
@@ -717,8 +749,8 @@ mod tests {
         contract.created_accounts.insert(&subaccount, &100);
         contract.created_accounts.insert(&toplevel, &100);
 
-        let state = borsh::to_vec(&contract).unwrap();
-        let old: OnSocialRelayer = BorshDeserialize::try_from_slice(&state).unwrap();
+        let state = near_sdk::borsh::to_vec(&contract).unwrap();
+        let old: OnSocialRelayer = near_sdk::borsh::BorshDeserialize::try_from_slice(&state).unwrap();
         let migrated = OnSocialRelayer {
             created_accounts: old.created_accounts,
             subaccount_balance: old.subaccount_balance,
@@ -728,7 +760,10 @@ mod tests {
 
         assert!(migrated.has_created_account(subaccount));
         assert!(migrated.has_created_account(toplevel));
-        assert_eq!(migrated.get_owner(), "relayer.onsocial.testnet".parse::<AccountId>().unwrap());
+        assert_eq!(
+            migrated.get_owner(),
+            "relayer.onsocial.testnet".parse::<AccountId>().unwrap()
+        );
     }
 
     #[test]
