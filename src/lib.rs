@@ -20,6 +20,7 @@ pub trait ExtSelf {
 
 /// OnSocialRelayer: A NEAR smart contract for creating subaccounts and top-level accounts.
 #[near]
+#[derive(PanicOnDefault)]
 pub struct OnSocialRelayer {
     created_accounts: LookupMap<AccountId, u64>,
     subaccount_balance: NearToken,
@@ -91,28 +92,6 @@ impl OnSocialRelayer {
                     .with_static_gas(CALLBACK_GAS)
                     .on_account_created(new_account_id, self.toplevel_balance),
             )
-    }
-
-    /// Callback function (private) to handle account creation results.
-    #[private]
-    pub fn on_account_created(&mut self, new_account_id: AccountId, transferred_balance: NearToken) {
-        match env::promise_result(0) {
-            PromiseResult::Successful(_) => {
-                self.created_accounts.insert(&new_account_id, &env::block_height());
-                env::log_str(&format!(
-                    r#"{{"standard": "nep297", "version": "1.0.0", "event": "AccountCreated", "data": {{"account_id": "{}"}}}}"#,
-                    new_account_id
-                ));
-            }
-            PromiseResult::Failed => {
-                self.created_accounts.remove(&new_account_id);
-                env::log_str(&format!(
-                    r#"{{"standard": "nep297", "version": "1.0.0", "event": "AccountCreationFailed", "data": {{"account_id": "{}", "refunded_amount": "{}"}}}}"#,
-                    new_account_id, transferred_balance.as_yoctonear()
-                ));
-                Promise::new(env::current_account_id()).transfer(transferred_balance);
-            }
-        }
     }
 
     /// Allows the owner to set a new subaccount balance.
@@ -275,6 +254,30 @@ impl OnSocialRelayer {
             subaccount_balance: old.subaccount_balance,
             toplevel_balance: old.toplevel_balance,
             owner: old.owner,
+        }
+    }
+}
+
+/// Implement the callback logic for ExtSelf trait
+#[near]
+impl ExtSelf for OnSocialRelayer {
+    fn on_account_created(&mut self, new_account_id: AccountId, transferred_balance: NearToken) {
+        match env::promise_result(0) {
+            PromiseResult::Successful(_) => {
+                self.created_accounts.insert(&new_account_id, &env::block_height());
+                env::log_str(&format!(
+                    r#"{{"standard": "nep297", "version": "1.0.0", "event": "AccountCreated", "data": {{"account_id": "{}"}}}}"#,
+                    new_account_id
+                ));
+            }
+            PromiseResult::Failed => {
+                self.created_accounts.remove(&new_account_id);
+                env::log_str(&format!(
+                    r#"{{"standard": "nep297", "version": "1.0.0", "event": "AccountCreationFailed", "data": {{"account_id": "{}", "refunded_amount": "{}"}}}}"#,
+                    new_account_id, transferred_balance.as_yoctonear()
+                ));
+                Promise::new(env::current_account_id()).transfer(transferred_balance);
+            }
         }
     }
 }
