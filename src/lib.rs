@@ -1,10 +1,9 @@
-// Core NEAR SDK imports providing essential blockchain functionality
 use near_sdk::{env, near, AccountId, NearToken, Promise, PanicOnDefault, PromiseResult};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::U128;
 use near_gas::NearGas;
 
-// Constants defining token amounts and gas limits for account creation
+// Constants
 const MINIMUM_SUBACCOUNT_BALANCE: NearToken = NearToken::from_yoctonear(10_000_000_000_000_000_000_000); // 0.01 NEAR
 const SPONSORED_SUBACCOUNT_BALANCE: NearToken = NearToken::from_yoctonear(100_000_000_000_000_000_000_000); // 0.1 NEAR
 const MINIMUM_TOPLEVEL_BALANCE: NearToken = NearToken::from_yoctonear(100_000_000_000_000_000_000_000); // 0.1 NEAR
@@ -12,14 +11,13 @@ const EXTRA_STORAGE_COST: NearToken = NearToken::from_yoctonear(10_000_000_000_0
 const CALLBACK_GAS: NearGas = NearGas::from_tgas(100); // 100 TGas
 const PENDING_BLOCK_HEIGHT: u64 = u64::MAX; // Special value for pending accounts
 
-/// Define the external contract interface for callbacks
+// Define the external contract interface for callbacks
 #[near_sdk::ext_contract(ext_self)]
 pub trait ExtSelf {
     fn on_account_created(&mut self, new_account_id: AccountId, transferred_balance: NearToken);
 }
 
-/// OnSocialRelayer: A NEAR smart contract for creating subaccounts and top-level accounts.
-#[near]
+#[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct OnSocialRelayer {
     created_accounts: LookupMap<AccountId, u64>,
@@ -30,7 +28,6 @@ pub struct OnSocialRelayer {
 
 #[near]
 impl OnSocialRelayer {
-    /// Initializes the contract with default balances and sets the deployer as owner.
     #[init]
     pub fn new() -> Self {
         Self {
@@ -41,7 +38,6 @@ impl OnSocialRelayer {
         }
     }
 
-    /// Creates a subaccount (e.g., alice.onsocial.near) with a public key.
     pub fn create_account(&mut self, new_account_id: AccountId, public_key: String) -> Promise {
         self.assert_app_wallet();
         Self::validate_subaccount_id(&new_account_id);
@@ -70,7 +66,6 @@ impl OnSocialRelayer {
             )
     }
 
-    /// Creates a top-level account (e.g., alice.testnet) with a public key.
     pub fn create_top_level_account(&mut self, new_account_id: AccountId, public_key: String) -> Promise {
         self.assert_app_wallet();
         Self::validate_toplevel_id(&new_account_id);
@@ -94,7 +89,6 @@ impl OnSocialRelayer {
             )
     }
 
-    /// Allows the owner to set a new subaccount balance.
     pub fn set_subaccount_balance(&mut self, amount: U128) {
         self.assert_owner();
         let new_balance = NearToken::from_yoctonear(amount.0);
@@ -106,7 +100,6 @@ impl OnSocialRelayer {
         self.subaccount_balance = new_balance;
     }
 
-    /// Allows the owner to set a new top-level balance.
     pub fn set_toplevel_balance(&mut self, amount: U128) {
         self.assert_owner();
         let new_balance = NearToken::from_yoctonear(amount.0);
@@ -118,34 +111,28 @@ impl OnSocialRelayer {
         self.toplevel_balance = new_balance;
     }
 
-    /// Returns the current subaccount balance in yoctoNEAR.
     pub fn get_subaccount_balance(&self) -> U128 {
         U128(self.subaccount_balance.as_yoctonear())
     }
 
-    /// Returns the current top-level balance in yoctoNEAR.
     pub fn get_toplevel_balance(&self) -> U128 {
         U128(self.toplevel_balance.as_yoctonear())
     }
 
-    /// Returns the contract owner’s AccountId.
     pub fn get_owner(&self) -> AccountId {
         self.owner.clone()
     }
 
-    /// Checks if an account has been successfully created.
     pub fn has_created_account(&self, account: AccountId) -> bool {
         self.created_accounts
             .get(&account)
             .map_or(false, |height| height != PENDING_BLOCK_HEIGHT)
     }
 
-    /// Returns the contract’s current NEAR balance in yoctoNEAR.
     pub fn get_contract_balance(&self) -> U128 {
         U128(env::account_balance().as_yoctonear())
     }
 
-    /// Validates subaccount ID.
     fn validate_subaccount_id(account_id: &AccountId) {
         let parent_account = if env::current_account_id().as_str().ends_with(".testnet") {
             "onsocial.testnet"
@@ -163,7 +150,6 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Validates top-level account ID.
     fn validate_toplevel_id(account_id: &AccountId) {
         let current = env::current_account_id();
         let suffix = if current.as_str().ends_with(".testnet") {
@@ -183,7 +169,6 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Validates public key format.
     fn validate_public_key(public_key: &String) {
         assert!(
             public_key.len() == 52 && public_key.starts_with("ed25519:"),
@@ -191,7 +176,6 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Prevents duplicate account creation.
     fn check_duplicate(&self, account_id: &AccountId) {
         if let Some(block_height) = self.created_accounts.get(account_id) {
             if block_height != PENDING_BLOCK_HEIGHT {
@@ -203,7 +187,6 @@ impl OnSocialRelayer {
         }
     }
 
-    /// Calculates required balance including storage costs.
     fn calculate_required_balance(&self, base_balance: NearToken) -> NearToken {
         let storage_cost = NearToken::from_yoctonear(
             env::storage_usage() as u128 * env::storage_byte_cost().as_yoctonear(),
@@ -213,7 +196,6 @@ impl OnSocialRelayer {
             .saturating_add(EXTRA_STORAGE_COST)
     }
 
-    /// Ensures sufficient funds.
     fn assert_sufficient_funds(&self, required_balance: NearToken) {
         let contract_balance = env::account_balance();
         assert!(
@@ -224,7 +206,6 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Restricts to owner.
     fn assert_owner(&self) {
         assert_eq!(
             env::predecessor_account_id(),
@@ -233,7 +214,6 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Restricts to contract itself.
     fn assert_app_wallet(&self) {
         let current = env::current_account_id();
         assert_eq!(
@@ -244,7 +224,6 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Migration function for contract upgrades.
     #[private]
     #[init(ignore_state)]
     pub fn migrate() -> Self {
@@ -258,7 +237,6 @@ impl OnSocialRelayer {
     }
 }
 
-/// Implement the callback logic for ExtSelf trait
 #[near]
 impl ExtSelf for OnSocialRelayer {
     fn on_account_created(&mut self, new_account_id: AccountId, transferred_balance: NearToken) {
@@ -282,7 +260,7 @@ impl ExtSelf for OnSocialRelayer {
     }
 }
 
-// Test module remains unchanged
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
