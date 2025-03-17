@@ -5,12 +5,12 @@ use near_sdk::json_types::U128;
 use near_gas::NearGas;
 
 // Constants defining token amounts and gas limits for account creation
-const MINIMUM_SUBACCOUNT_BALANCE: NearToken = NearToken::from_yoctonear(10_000_000_000_000_000_000_000); // 0.01 NEAR, default funding for Testnet subaccounts
-const SPONSORED_SUBACCOUNT_BALANCE: NearToken = NearToken::from_yoctonear(100_000_000_000_000_000_000_000); // 0.1 NEAR, sponsored amount for Mainnet .near subaccounts
-const MINIMUM_TOPLEVEL_BALANCE: NearToken = NearToken::from_yoctonear(100_000_000_000_000_000_000_000); // 0.1 NEAR, minimum funding for top-level accounts
-const EXTRA_STORAGE_COST: NearToken = NearToken::from_yoctonear(10_000_000_000_000_000_000_000); // 0.01 NEAR, additional buffer for storage costs
-const CALLBACK_GAS: NearGas = NearGas::from_tgas(100); // 100 TGas for callbacks, (typical usage <50 TGas)
-const PENDING_BLOCK_HEIGHT: u64 = u64::MAX; // Special value marking accounts as pending creation
+const MINIMUM_SUBACCOUNT_BALANCE: NearToken = NearToken::from_yoctonear(10_000_000_000_000_000_000_000); // 0.01 NEAR
+const SPONSORED_SUBACCOUNT_BALANCE: NearToken = NearToken::from_yoctonear(100_000_000_000_000_000_000_000); // 0.1 NEAR
+const MINIMUM_TOPLEVEL_BALANCE: NearToken = NearToken::from_yoctonear(100_000_000_000_000_000_000_000); // 0.1 NEAR
+const EXTRA_STORAGE_COST: NearToken = NearToken::from_yoctonear(10_000_000_000_000_000_000_000); // 0.01 NEAR
+const CALLBACK_GAS: NearGas = NearGas::from_tgas(100); // 100 TGas
+const PENDING_BLOCK_HEIGHT: u64 = u64::MAX; // Special value for pending accounts
 
 /// Define the external contract interface for callbacks
 #[near_sdk::ext_contract(ext_self)]
@@ -19,15 +19,12 @@ pub trait ExtSelf {
 }
 
 /// OnSocialRelayer: A NEAR smart contract for creating subaccounts and top-level accounts.
-/// - Sponsors 0.1 NEAR for .onsocial.near subaccounts on Mainnet.
-/// - Uses configurable balances (default 0.01 NEAR for Testnet, 0.1 NEAR for top-level).
-/// - Tracks creation status with callbacks and logs events using NEP-297.
 #[near]
 pub struct OnSocialRelayer {
-    created_accounts: LookupMap<AccountId, u64>, // Stores account IDs mapped to creation block height (or PENDING_BLOCK_HEIGHT)
-    subaccount_balance: NearToken, // Configurable funding amount for subaccounts, defaults to 0.01 NEAR
-    toplevel_balance: NearToken, // Configurable funding amount for top-level accounts, defaults to 0.1 NEAR
-    owner: AccountId, // Account that deployed the contract, with privileged access
+    created_accounts: LookupMap<AccountId, u64>,
+    subaccount_balance: NearToken,
+    toplevel_balance: NearToken,
+    owner: AccountId,
 }
 
 #[near]
@@ -44,8 +41,6 @@ impl OnSocialRelayer {
     }
 
     /// Creates a subaccount (e.g., alice.onsocial.near) with a public key.
-    /// - Sponsors 0.1 NEAR for Mainnet (.near), otherwise uses subaccount_balance.
-    /// - Returns a Promise that triggers a callback to confirm success or handle failure.
     pub fn create_account(&mut self, new_account_id: AccountId, public_key: String) -> Promise {
         self.assert_app_wallet();
         Self::validate_subaccount_id(&new_account_id);
@@ -54,9 +49,9 @@ impl OnSocialRelayer {
 
         let parsed_key = public_key.parse().expect("Invalid public key format");
         let transfer_amount = if env::current_account_id().as_str().ends_with(".near") {
-            SPONSORED_SUBACCOUNT_BALANCE // 0.1 NEAR for Mainnet
+            SPONSORED_SUBACCOUNT_BALANCE
         } else {
-            self.subaccount_balance // 0.01 NEAR default for Testnet
+            self.subaccount_balance
         };
         let required_balance = self.calculate_required_balance(transfer_amount);
         self.assert_sufficient_funds(required_balance);
@@ -75,8 +70,6 @@ impl OnSocialRelayer {
     }
 
     /// Creates a top-level account (e.g., alice.testnet) with a public key.
-    /// - Transfers the configurable toplevel_balance (default 0.1 NEAR).
-    /// - Returns a Promise with a callback to track the outcome.
     pub fn create_top_level_account(&mut self, new_account_id: AccountId, public_key: String) -> Promise {
         self.assert_app_wallet();
         Self::validate_toplevel_id(&new_account_id);
@@ -122,7 +115,7 @@ impl OnSocialRelayer {
         }
     }
 
-    /// Allows the owner to set a new subaccount balance, with a minimum of 0.01 NEAR.
+    /// Allows the owner to set a new subaccount balance.
     pub fn set_subaccount_balance(&mut self, amount: U128) {
         self.assert_owner();
         let new_balance = NearToken::from_yoctonear(amount.0);
@@ -134,7 +127,7 @@ impl OnSocialRelayer {
         self.subaccount_balance = new_balance;
     }
 
-    /// Allows the owner to set a new top-level balance, with a minimum of 0.1 NEAR.
+    /// Allows the owner to set a new top-level balance.
     pub fn set_toplevel_balance(&mut self, amount: U128) {
         self.assert_owner();
         let new_balance = NearToken::from_yoctonear(amount.0);
@@ -146,7 +139,7 @@ impl OnSocialRelayer {
         self.toplevel_balance = new_balance;
     }
 
-    /// Returns the current subaccount balance in yoctoNEAR for external querying.
+    /// Returns the current subaccount balance in yoctoNEAR.
     pub fn get_subaccount_balance(&self) -> U128 {
         U128(self.subaccount_balance.as_yoctonear())
     }
@@ -161,7 +154,7 @@ impl OnSocialRelayer {
         self.owner.clone()
     }
 
-    /// Checks if an account has been successfully created (i.e., not pending).
+    /// Checks if an account has been successfully created.
     pub fn has_created_account(&self, account: AccountId) -> bool {
         self.created_accounts
             .get(&account)
@@ -173,7 +166,7 @@ impl OnSocialRelayer {
         U128(env::account_balance().as_yoctonear())
     }
 
-    /// Validates that an account ID is a proper subaccount of .onsocial.near or .onsocial.testnet.
+    /// Validates subaccount ID.
     fn validate_subaccount_id(account_id: &AccountId) {
         let parent_account = if env::current_account_id().as_str().ends_with(".testnet") {
             "onsocial.testnet"
@@ -191,7 +184,7 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Ensures a top-level account ID isn’t a subaccount of the relayer and meets length requirements.
+    /// Validates top-level account ID.
     fn validate_toplevel_id(account_id: &AccountId) {
         let current = env::current_account_id();
         let suffix = if current.as_str().ends_with(".testnet") {
@@ -211,7 +204,7 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Validates that a public key is 52 characters long and starts with "ed25519:".
+    /// Validates public key format.
     fn validate_public_key(public_key: &String) {
         assert!(
             public_key.len() == 52 && public_key.starts_with("ed25519:"),
@@ -219,7 +212,7 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Prevents duplicate account creation by checking if the account already exists (not pending).
+    /// Prevents duplicate account creation.
     fn check_duplicate(&self, account_id: &AccountId) {
         if let Some(block_height) = self.created_accounts.get(account_id) {
             if block_height != PENDING_BLOCK_HEIGHT {
@@ -231,7 +224,7 @@ impl OnSocialRelayer {
         }
     }
 
-    /// Calculates the total NEAR required for account creation, including storage costs.
+    /// Calculates required balance including storage costs.
     fn calculate_required_balance(&self, base_balance: NearToken) -> NearToken {
         let storage_cost = NearToken::from_yoctonear(
             env::storage_usage() as u128 * env::storage_byte_cost().as_yoctonear(),
@@ -241,7 +234,7 @@ impl OnSocialRelayer {
             .saturating_add(EXTRA_STORAGE_COST)
     }
 
-    /// Ensures the contract has sufficient funds to cover the required balance.
+    /// Ensures sufficient funds.
     fn assert_sufficient_funds(&self, required_balance: NearToken) {
         let contract_balance = env::account_balance();
         assert!(
@@ -252,7 +245,7 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Restricts an action to the contract owner only.
+    /// Restricts to owner.
     fn assert_owner(&self) {
         assert_eq!(
             env::predecessor_account_id(),
@@ -261,7 +254,7 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Ensures only the relayer contract itself can initiate account creation.
+    /// Restricts to contract itself.
     fn assert_app_wallet(&self) {
         let current = env::current_account_id();
         assert_eq!(
@@ -272,7 +265,7 @@ impl OnSocialRelayer {
         );
     }
 
-    /// Migration function to update contract state during upgrades (private, ignores old state).
+    /// Migration function for contract upgrades.
     #[private]
     #[init(ignore_state)]
     pub fn migrate() -> Self {
