@@ -12,24 +12,25 @@ The OnSocial Relayer contract enables gasless transactions, account creation spo
 - **Account Sponsoring**: Funds creation of named (e.g., `user.testnet`) or implicit accounts.
 - **Gas Pool Management**: Funds operations via a NEAR deposit pool.
 - **Admin Controls**: Configurable whitelist, gas limits, sponsor amounts, and admin list.
-- **Failed Transaction Queue**: Queues and retries failed transactions (up to 100).
+- **Failed Transaction Queue**: Queues and retries failed transactions (up to 100) with increased gas (120% + buffer, capped at 300 TGas).
 - **Event Emission**: Logs actions using NEP-297 events.
 - **Testing Utilities**: Simulation methods for signature and promise results.
 
 ## Prerequisites
 
 - **NEAR Wallet**: Use [wallet.testnet.near.org](https://wallet.testnet.near.org) for Testnet or [wallet.near.org](https://wallet.near.org) for Mainnet.
-- **NEAR CLI**: Install via `npm install -g near-cli` or `cargo install near-cli`.
-- **Rust Toolchain**: Install with `rustup install stable` and add WASM target via `rustup target add wasm32-unknown-unknown`.
+- **NEAR CLI**: Install via `cargo install cargo-near`.
+- **Rust Toolchain**: Install with `rustup install stable` (tested with Rust 1.74+ as of March 2025) and add WASM target via `rustup target add wasm32-unknown-unknown`.
+- **Dependencies**: Requires `ed25519-dalek` for signature verification.
 - **Basic NEAR Knowledge**: Familiarity with accounts, keys, and transactions.
 
 ## Contract Methods
 
 ### Initialization
 - **`new(payment_ft_contract: Option<AccountId>, min_ft_payment: U128, whitelisted_contracts: Vec<AccountId>)`**
-  - Initializes the contract.
-  - **Args**: Optional FT payment contract, minimum FT payment, and initial whitelist.
-  - **Defaults**: Adds `social.near`, `social.tkn.near`, USDC Testnet (`3e2210...`), USDC Mainnet (`17208...`), and admins (`onsocial.sputnik-dao.near`, `onsocial.testnet`, `onsocial.near`).
+  - Initializes the contract with defaults: 100 yoctoNEAR sponsor amount, 150 TGas default gas, 50 TGas buffer.
+  - **Args**: Optional FT payment contract, minimum FT payment (yoctoNEAR), initial whitelist.
+  - **Defaults**: Adds `social.near`, `social.tkn.near`, USDC Testnet (`3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af`), USDC Mainnet (`17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1`), and admins (`onsocial.sputnik-dao.near`, `onsocial.testnet`, `onsocial.near`).
 
 ### Public Methods
 - **`deposit_gas_pool()`** *(Payable)*
@@ -52,10 +53,10 @@ The OnSocial Relayer contract enables gasless transactions, account creation spo
   - Returns the list of admin account IDs.
 
 - **`get_default_gas() -> Gas`**
-  - Returns the default gas limit (in TGas).
+  - Returns the default gas limit in Gas (default: 150 TGas).
 
 - **`get_gas_buffer() -> Gas`**
-  - Returns the gas buffer (in TGas).
+  - Returns the gas buffer in Gas (default: 50 TGas).
 
 - **`get_failed_transactions_count() -> u32`**
   - Returns the number of queued failed transactions.
@@ -67,9 +68,9 @@ The OnSocial Relayer contract enables gasless transactions, account creation spo
   - **Events**: `AccountSponsored { account_id, public_key, is_implicit }`, `FunctionCallKeyAdded` (if key added).
 
 - **`relay_meta_transaction(signed_delegate: SignedDelegateAction) -> Result<(), RelayerError>`**
-  - Relays a signed meta-transaction.
+  - Relays a signed meta-transaction. In test mode, signature verification can be simulated (see `set_simulate_signature_failure`).
   - **Args**: Signed delegate action with sender, receiver, actions, nonce, max block height, signature, and public key.
-  - **Requires**: Valid nonce, signature, whitelisted receiver, sufficient gas.
+  - **Requires**: Valid nonce, ed25519 signature, whitelisted receiver, sufficient gas.
   - **Event**: `MetaTransactionRelayed { sender_id, nonce }`.
 
 ### Callback Methods
@@ -78,7 +79,7 @@ The OnSocial Relayer contract enables gasless transactions, account creation spo
   - **Event**: `MetaTransactionRelayed { sender_id, nonce }`.
 
 - **`callback_failure(signed_delegate: SignedDelegateAction, gas: Gas)`**
-  - Queues a failed transaction for retry (up to 100).
+  - Queues a failed transaction for retry (up to 100) with 120% gas + buffer, capped at 300 TGas.
 
 - **`callback_key_addition(sender_id: AccountId)`**
   - Confirms function call key addition.
@@ -102,11 +103,11 @@ The OnSocial Relayer contract enables gasless transactions, account creation spo
   - **Requires**: Caller must be an admin.
 
 - **`set_gas_config(default_gas_tgas: u64, gas_buffer_tgas: u64) -> Result<(), RelayerError>`**
-  - Sets default gas and buffer (minimum 50 TGas and 10 TGas).
+  - Sets default gas and buffer in TGas (converted to Gas internally). Minimum 50 TGas default, 10 TGas buffer.
   - **Requires**: Caller must be an admin.
 
 - **`retry_or_clear_failed_transactions(retry: bool) -> Result<(), RelayerError>`**
-  - Retries or clears failed transactions.
+  - Retries (with 120% gas + buffer, capped at 300 TGas) or clears failed transactions.
   - **Args**: `true` to retry, `false` to clear.
   - **Requires**: Caller must be an admin.
   - **Events**: `FailedTransactionsRetried { count }`, `FailedTransactionsCleared { count }`.
@@ -126,29 +127,59 @@ The OnSocial Relayer contract enables gasless transactions, account creation spo
 - **`FailedTransactionsCleared { count: u32 }`**
 - **`FailedTransactionsRetried { count: u32 }`**
 
-## Error Types
-- **`RelayerError`**:
-  - `InsufficientGasPool`
-  - `InvalidNonce`
-  - `NotWhitelisted`
-  - `InvalidSignature`
-  - `NoActions`
-  - `InvalidFTTransfer`
-  - `InsufficientDeposit`
-  - `InsufficientBalance`
-  - `AccountExists`
-  - `Unauthorized`
-  - `InvalidSponsorAmount`
-  - `InvalidKeyAction`
-  - `InvalidAccountId`
-  - `ExpiredTransaction`
-  - `InvalidGasConfig`
-  - `NoFailedTransactions`
-
-## Environment Variables
-
-Set these for convenience:
+**Example**: To view events:
 ```bash
+near view $CONTRACT_ID --logs
+
+Error Types
+RelayerError:
+InsufficientGasPool: Gas pool below minimum (1 NEAR).
+
+InvalidNonce: Nonce reused or out of sequence.
+
+NotWhitelisted: Receiver not in whitelist.
+
+InvalidSignature: Ed25519 signature verification failed.
+
+NoActions: Delegate action has no operations.
+
+InvalidFTTransfer: FT transfer not to relayer or wrong method/contract.
+
+InsufficientDeposit: FT payment below minimum.
+
+InsufficientBalance: Insufficient funds for sponsoring.
+
+AccountExists: Account already sponsored.
+
+Unauthorized: Caller not an admin.
+
+InvalidSponsorAmount: Amount below 0.05 NEAR.
+
+InvalidKeyAction: Invalid key addition parameters.
+
+InvalidAccountId: Malformed account name or implicit ID.
+
+ExpiredTransaction: Block height exceeds max_block_height.
+
+InvalidGasConfig: Gas settings below minimums.
+
+NoFailedTransactions: No transactions to retry/clear.
+
+Dependencies
+near-sdk = "5.11.0": NEAR smart contract framework.
+
+serde = "1.0": Serialization/deserialization.
+
+serde_json = "1.0": JSON handling.
+
+borsh = "1.5.7": Borsh serialization with schema support.
+
+ed25519-dalek = "2.1.1": Ed25519 signature verification.
+
+Environment Variables
+Set these for convenience:
+bash
+
 export CONTRACT_ID="onsocialrelayer.testnet"
 export ACCOUNT_ID="youraccount.testnet"
 export ADMIN_ID="onsocial.testnet"
@@ -189,7 +220,7 @@ json
       "nonce": 1,
       "max_block_height": 1000000
     },
-    "signature": "64-byte-ed25519-signature",
+    "signature": "ed25519:<64-byte-hex-signature>",
     "public_key": "ed25519:xyz789..."
   }
 }
@@ -198,12 +229,13 @@ bash
 
 near call $CONTRACT_ID relay_meta_transaction '<json-above>' --accountId $ACCOUNT_ID
 
+Note: Generate the signature using the sender’s private key over the serialized DelegateAction (Borsh format).
 Deployment Instructions
 Install Dependencies
 bash
 
 rustup target add wasm32-unknown-unknown
-cargo install near-cli cargo-near
+cargo install cargo-near
 
 Build
 bash
@@ -213,12 +245,17 @@ cargo build --target wasm32-unknown-unknown --release
 Deploy to Testnet
 bash
 
-near deploy --accountId $ACCOUNT_ID --wasmFile target/wasm32-unknown-unknown/release/onsocialrelayer.wasm
+cargo near deploy --account-id $ACCOUNT_ID --wasm-file target/wasm32-unknown-unknown/release/onsocialrelayer.wasm
 
 Initialize
 bash
 
 near call $CONTRACT_ID new '{"payment_ft_contract": null, "min_ft_payment": "0", "whitelisted_contracts": ["social.near"]}' --accountId $ACCOUNT_ID
+
+Verify
+bash
+
+near view $CONTRACT_ID get_admins
 
 Contributing
 Bugs: Report via GitHub issues.
@@ -229,9 +266,7 @@ Code: Fork the repo, create a feature branch, add tests, and submit a PR.
 
 License
 MIT License.
-
 Troubleshooting
-
 Insufficient Gas Pool: Use deposit_gas_pool to add more NEAR.
 
 Invalid Signature: Ensure the signature matches the sender’s public key and the serialized DelegateAction.
@@ -239,3 +274,6 @@ Invalid Signature: Ensure the signature matches the sender’s public key and th
 Not Whitelisted: Request an admin to add the target contract with update_whitelist.
 
 Transaction Expired: Increase max_block_height in the meta-transaction.
+
+Queued Failed Transactions: Check count with get_failed_transactions_count and retry/clear via retry_or_clear_failed_transactions.
+
