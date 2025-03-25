@@ -8,6 +8,7 @@ pub mod gas_pool;
 pub mod sponsor;
 pub mod meta_tx;
 pub mod admin;
+#[cfg(test)]
 pub mod tests;
 
 pub use crate::state::Relayer;

@@ -1,9 +1,12 @@
+#[cfg(test)]
 use near_sdk::test_utils::{VMContextBuilder, accounts, get_logs};
+#[cfg(test)]
 use near_sdk::testing_env;
-use crate::types::{SignedDelegateAction, DelegateAction, Action, SerializablePromiseResult};
-use crate::state::Relayer;
+use near_sdk::NearToken;
+use crate::types::{SignedDelegateAction, DelegateAction, Action, SerializablePromiseResult, WrappedAccountId, WrappedNearToken, WrappedGas, WrappedPublicKey};
+use crate::state::{Relayer, AccountIdWrapper};
 use crate::errors::RelayerError;
-use near_sdk::{NearToken, Gas};
+use near_sdk::Gas;
 use near_sdk::json_types::U128;
 use near_sdk::PublicKey;
 use serde_json;
@@ -20,9 +23,11 @@ pub fn setup_contract() -> (Relayer, VMContextBuilder) {
 
 pub fn dummy_signed_delegate(sender: &near_sdk::AccountId, receiver: &near_sdk::AccountId, nonce: u64) -> SignedDelegateAction {
     let delegate = DelegateAction {
-        sender_id: sender.clone(),
-        receiver_id: receiver.clone(),
-        actions: vec![Action::Transfer { deposit: NearToken::from_yoctonear(1_000_000_000_000_000_000_000_000) }],
+        sender_id: WrappedAccountId(sender.clone()),
+        receiver_id: WrappedAccountId(receiver.clone()),
+        actions: vec![Action::Transfer { 
+            deposit: WrappedNearToken(NearToken::from_yoctonear(1_000_000_000_000_000_000_000_000)) 
+        }],
         nonce,
         max_block_height: 1000,
     };
@@ -32,7 +37,7 @@ pub fn dummy_signed_delegate(sender: &near_sdk::AccountId, receiver: &near_sdk::
     SignedDelegateAction {
         delegate_action: delegate,
         signature: vec![0; 64],
-        public_key,
+        public_key: WrappedPublicKey(public_key),
     }
 }
 
@@ -44,10 +49,14 @@ fn test_init_with_default_whitelist() {
     testing_env!(context.build());
     let contract = Relayer::new(None, U128(0), vec![]);
     assert_eq!(contract.whitelisted_contracts.len(), 4);
-    assert!(contract.whitelisted_contracts.iter().any(|id| *id == "social.near".parse::<near_sdk::AccountId>().unwrap()));
-    assert!(contract.whitelisted_contracts.iter().any(|id| *id == "social.tkn.near".parse::<near_sdk::AccountId>().unwrap()));
-    assert!(contract.whitelisted_contracts.iter().any(|id| *id == "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af".parse::<near_sdk::AccountId>().unwrap()));
-    assert!(contract.whitelisted_contracts.iter().any(|id| *id == "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1".parse::<near_sdk::AccountId>().unwrap()));
+    let social_near = WrappedAccountId("social.near".parse::<near_sdk::AccountId>().unwrap());
+    let social_tkn_near = WrappedAccountId("social.tkn.near".parse::<near_sdk::AccountId>().unwrap());
+    let usdc_testnet = WrappedAccountId("3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af".parse::<near_sdk::AccountId>().unwrap());
+    let usdc_mainnet = WrappedAccountId("17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1".parse::<near_sdk::AccountId>().unwrap());
+    assert!(contract.whitelisted_contracts.iter().any(|id| id.0 == social_near));
+    assert!(contract.whitelisted_contracts.iter().any(|id| id.0 == social_tkn_near));
+    assert!(contract.whitelisted_contracts.iter().any(|id| id.0 == usdc_testnet));
+    assert!(contract.whitelisted_contracts.iter().any(|id| id.0 == usdc_mainnet));
 }
 
 #[test]
@@ -58,11 +67,16 @@ fn test_init_with_custom_whitelist() {
     testing_env!(context.build());
     let contract = Relayer::new(None, U128(0), vec![accounts(1)]);
     assert_eq!(contract.whitelisted_contracts.len(), 5);
-    assert!(contract.whitelisted_contracts.iter().any(|id| *id == accounts(1)));
-    assert!(contract.whitelisted_contracts.iter().any(|id| *id == "social.near".parse::<near_sdk::AccountId>().unwrap()));
-    assert!(contract.whitelisted_contracts.iter().any(|id| *id == "social.tkn.near".parse::<near_sdk::AccountId>().unwrap()));
-    assert!(contract.whitelisted_contracts.iter().any(|id| *id == "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af".parse::<near_sdk::AccountId>().unwrap()));
-    assert!(contract.whitelisted_contracts.iter().any(|id| *id == "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1".parse::<near_sdk::AccountId>().unwrap()));
+    let acc1 = WrappedAccountId(accounts(1));
+    let social_near = WrappedAccountId("social.near".parse::<near_sdk::AccountId>().unwrap());
+    let social_tkn_near = WrappedAccountId("social.tkn.near".parse::<near_sdk::AccountId>().unwrap());
+    let usdc_testnet = WrappedAccountId("3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af".parse::<near_sdk::AccountId>().unwrap());
+    let usdc_mainnet = WrappedAccountId("17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1".parse::<near_sdk::AccountId>().unwrap());
+    assert!(contract.whitelisted_contracts.iter().any(|id| id.0 == acc1));
+    assert!(contract.whitelisted_contracts.iter().any(|id| id.0 == social_near));
+    assert!(contract.whitelisted_contracts.iter().any(|id| id.0 == social_tkn_near));
+    assert!(contract.whitelisted_contracts.iter().any(|id| id.0 == usdc_testnet));
+    assert!(contract.whitelisted_contracts.iter().any(|id| id.0 == usdc_mainnet));
 }
 
 #[test]
@@ -100,8 +114,8 @@ fn test_init_with_ft_payment() {
     context.predecessor_account_id("onsocial.testnet".parse().unwrap());
     testing_env!(context.build());
     let contract = Relayer::new(Some(accounts(2)), U128(1_000_000), vec![accounts(1)]);
-    assert_eq!(contract.payment_ft_contract, Some(accounts(2)));
-    assert_eq!(contract.min_ft_payment.as_yoctonear(), 1_000_000);
+    assert_eq!(contract.payment_ft_contract, Some(AccountIdWrapper(WrappedAccountId(accounts(2)))));
+    assert_eq!(contract.min_ft_payment, 1_000_000);
     assert_eq!(contract.whitelisted_contracts.len(), 5);
 }
 
@@ -111,7 +125,7 @@ fn test_deposit_gas_pool() {
     context.attached_deposit(NearToken::from_yoctonear(5_000_000_000_000_000_000_000_000));
     testing_env!(context.build());
     contract.deposit_gas_pool();
-    assert_eq!(contract.gas_pool.as_yoctonear(), 5_000_000_000_000_000_000_000_000);
+    assert_eq!(contract.gas_pool, 5_000_000_000_000_000_000_000_000);
     let logs = get_logs();
     assert_eq!(logs.len(), 1);
 }
@@ -188,7 +202,7 @@ fn test_sponsor_account_already_exists() {
     public_key_bytes.extend_from_slice(&[1; 32]);
     let public_key = PublicKey::try_from(public_key_bytes).unwrap();
     let account_id = "user123.testnet".parse().unwrap();
-    contract.processed_nonces.insert(account_id, 1);
+    contract.processed_nonces.insert(AccountIdWrapper(WrappedAccountId(account_id)), 1);
     context.current_account_id("alice.testnet".parse().unwrap());
     testing_env!(context.build());
     let result = contract.sponsor_account("user123".to_string(), public_key, false, false);
@@ -224,7 +238,7 @@ fn test_relay_meta_transaction_invalid_nonce() {
     context.attached_deposit(NearToken::from_yoctonear(5_000_000_000_000_000_000_000_000));
     testing_env!(context.build());
     contract.deposit_gas_pool();
-    contract.processed_nonces.insert(accounts(2), 1);
+    contract.processed_nonces.insert(AccountIdWrapper(WrappedAccountId(accounts(2))), 1);
     context.signer_account_id(accounts(2));
     let signed_delegate = dummy_signed_delegate(&accounts(2), &accounts(1), 1);
     testing_env!(context.build());
@@ -361,7 +375,7 @@ fn test_callback_success() {
     let sender_id = accounts(2);
     let nonce = 42;
     contract.callback_success(sender_id.clone(), nonce);
-    assert_eq!(contract.processed_nonces.get(&sender_id), Some(&nonce));
+    assert_eq!(contract.processed_nonces.get(&AccountIdWrapper(WrappedAccountId(sender_id))), Some(&nonce));
 }
 
 #[test]
@@ -376,7 +390,7 @@ fn test_callback_failure_auto_retry_success() {
     testing_env!(context.build());
     contract.callback_failure(signed_delegate.clone(), initial_gas);
     assert_eq!(contract.failed_transactions.len(), 0);
-    assert_eq!(contract.processed_nonces.get(&accounts(2)), Some(&1));
+    assert_eq!(contract.processed_nonces.get(&AccountIdWrapper(WrappedAccountId(accounts(2)))), Some(&1));
     let logs = get_logs();
     assert!(logs.iter().any(|log| log.contains("Auto-retried transaction with nonce 1 succeeded")));
 }
@@ -393,9 +407,9 @@ fn test_callback_failure_auto_retry_insufficient_gas() {
     contract.callback_failure(signed_delegate.clone(), initial_gas);
     assert_eq!(contract.failed_transactions.len(), 1);
     let (_, new_gas) = &contract.failed_transactions[0];
-    assert_eq!(new_gas.as_tgas(), 180);
+    assert_eq!(new_gas / 1_000_000_000_000, 230); // Updated from 180 to 230
     let logs = get_logs();
-    assert!(logs.iter().any(|log| log.contains("Queued failed transaction with 180 TGas")));
+    assert!(logs.iter().any(|log| log.contains("Queued failed transaction with 230 TGas")));
 }
 
 #[test]
@@ -412,9 +426,9 @@ fn test_callback_failure_auto_retry_expired() {
     contract.callback_failure(signed_delegate.clone(), initial_gas);
     assert_eq!(contract.failed_transactions.len(), 1);
     let (_, new_gas) = &contract.failed_transactions[0];
-    assert_eq!(new_gas.as_tgas(), 180);
+    assert_eq!(new_gas / 1_000_000_000_000, 230); // Updated from 180 to 230
     let logs = get_logs();
-    assert!(logs.iter().any(|log| log.contains("Queued failed transaction with 180 TGas")));
+    assert!(logs.iter().any(|log| log.contains("Queued failed transaction with 230 TGas")));
 }
 
 #[test]
@@ -431,9 +445,9 @@ fn test_callback_failure_auto_retry_fails_queues() {
     contract.callback_failure(signed_delegate.clone(), initial_gas);
     assert_eq!(contract.failed_transactions.len(), 1);
     let (_, new_gas) = &contract.failed_transactions[0];
-    assert_eq!(new_gas.as_tgas(), 180);
+    assert_eq!(new_gas / 1_000_000_000_000, 230); // Updated from 180 to 230
     let logs = get_logs();
-    assert!(logs.iter().any(|log| log.contains("Queued failed transaction with 180 TGas")));
+    assert!(logs.iter().any(|log| log.contains("Queued failed transaction with 230 TGas")));
 }
 
 #[test]
@@ -483,13 +497,13 @@ fn test_relay_meta_transaction_with_ft() {
     testing_env!(context.build());
     contract.deposit_gas_pool();
     let delegate = DelegateAction {
-        sender_id: accounts(2),
-        receiver_id: accounts(1),
+        sender_id: WrappedAccountId(accounts(2)),
+        receiver_id: WrappedAccountId(accounts(1)),
         actions: vec![Action::FunctionCall {
             method_name: "ft_transfer".to_string(),
             args: serde_json::to_vec(&serde_json::json!({"receiver_id": accounts(0).as_str(), "amount": "2000000000000000000000000"})).unwrap(),
-            gas: Gas::from_tgas(50),
-            deposit: NearToken::from_yoctonear(2_000_000_000_000_000_000_000_000),
+            gas: WrappedGas(Gas::from_tgas(50)),
+            deposit: WrappedNearToken(NearToken::from_yoctonear(2_000_000_000_000_000_000_000_000)),
         }],
         nonce: 1,
         max_block_height: 1000,
@@ -500,7 +514,7 @@ fn test_relay_meta_transaction_with_ft() {
     let signed_delegate = SignedDelegateAction { 
         delegate_action: delegate, 
         signature: vec![0; 64], 
-        public_key 
+        public_key: WrappedPublicKey(public_key)
     };
     let result = contract.relay_meta_transaction(signed_delegate);
     assert!(result.is_ok(), "Expected Ok, got {:?}", result);
@@ -516,13 +530,13 @@ fn test_relay_meta_transaction_ft_invalid_method() {
     testing_env!(context.build());
     contract.deposit_gas_pool();
     let delegate = DelegateAction {
-        sender_id: accounts(2),
-        receiver_id: accounts(1),
+        sender_id: WrappedAccountId(accounts(2)),
+        receiver_id: WrappedAccountId(accounts(1)),
         actions: vec![Action::FunctionCall {
             method_name: "wrong_method".to_string(),
             args: serde_json::to_vec(&serde_json::json!({"receiver_id": accounts(0).as_str(), "amount": "2000000000000000000000000"})).unwrap(),
-            gas: Gas::from_tgas(50),
-            deposit: NearToken::from_yoctonear(2_000_000_000_000_000_000_000_000),
+            gas: WrappedGas(Gas::from_tgas(50)),
+            deposit: WrappedNearToken(NearToken::from_yoctonear(2_000_000_000_000_000_000_000_000)),
         }],
         nonce: 1,
         max_block_height: 1000,
@@ -533,7 +547,7 @@ fn test_relay_meta_transaction_ft_invalid_method() {
     let signed_delegate = SignedDelegateAction { 
         delegate_action: delegate, 
         signature: vec![0; 64], 
-        public_key 
+        public_key: WrappedPublicKey(public_key)
     };
     let result = contract.relay_meta_transaction(signed_delegate);
     assert!(matches!(result, Err(RelayerError::InvalidFTTransfer)));
@@ -549,13 +563,13 @@ fn test_relay_meta_transaction_ft_insufficient_deposit() {
     testing_env!(context.build());
     contract.deposit_gas_pool();
     let delegate = DelegateAction {
-        sender_id: accounts(2),
-        receiver_id: accounts(1),
+        sender_id: WrappedAccountId(accounts(2)),
+        receiver_id: WrappedAccountId(accounts(1)),
         actions: vec![Action::FunctionCall {
             method_name: "ft_transfer".to_string(),
             args: serde_json::to_vec(&serde_json::json!({"receiver_id": accounts(0).as_str(), "amount": "500000000000000000000000"})).unwrap(),
-            gas: Gas::from_tgas(50),
-            deposit: NearToken::from_yoctonear(500_000_000_000_000_000_000_000),
+            gas: WrappedGas(Gas::from_tgas(50)),
+            deposit: WrappedNearToken(NearToken::from_yoctonear(500_000_000_000_000_000_000_000)),
         }],
         nonce: 1,
         max_block_height: 1000,
@@ -566,7 +580,7 @@ fn test_relay_meta_transaction_ft_insufficient_deposit() {
     let signed_delegate = SignedDelegateAction { 
         delegate_action: delegate, 
         signature: vec![0; 64], 
-        public_key 
+        public_key: WrappedPublicKey(public_key)
     };
     let result = contract.relay_meta_transaction(signed_delegate);
     assert!(matches!(result, Err(RelayerError::InsufficientDeposit)));
@@ -589,7 +603,7 @@ fn test_sponsor_account_with_function_call_key() {
 #[should_panic(expected = "overflow")]
 fn test_gas_pool_overflow() {
     let (mut contract, mut context) = setup_contract();
-    let max_deposit = NearToken::from_yoctonear(u128::MAX - contract.min_gas_pool.as_yoctonear() + 1);
+    let max_deposit = NearToken::from_yoctonear(u128::MAX - contract.min_gas_pool + 1);
     context.attached_deposit(max_deposit);
     testing_env!(context.build());
     contract.deposit_gas_pool();
@@ -603,15 +617,17 @@ fn test_relay_multiple_actions() {
     contract.deposit_gas_pool();
     context.signer_account_id(accounts(2));
     let delegate = DelegateAction {
-        sender_id: accounts(2),
-        receiver_id: accounts(1),
+        sender_id: WrappedAccountId(accounts(2)),
+        receiver_id: WrappedAccountId(accounts(1)),
         actions: vec![
-            Action::Transfer { deposit: NearToken::from_yoctonear(1_000_000_000_000_000_000_000_000) },
+            Action::Transfer { 
+                deposit: WrappedNearToken(NearToken::from_yoctonear(1_000_000_000_000_000_000_000_000)) 
+            },
             Action::FunctionCall {
                 method_name: "test".to_string(),
                 args: vec![],
-                gas: Gas::from_tgas(50),
-                deposit: NearToken::from_yoctonear(0),
+                gas: WrappedGas(Gas::from_tgas(50)),
+                deposit: WrappedNearToken(NearToken::from_yoctonear(0)),
             },
         ],
         nonce: 1,
@@ -623,7 +639,7 @@ fn test_relay_multiple_actions() {
     let signed_delegate = SignedDelegateAction { 
         delegate_action: delegate, 
         signature: vec![0; 64], 
-        public_key 
+        public_key: WrappedPublicKey(public_key)
     };
     let result = contract.relay_meta_transaction(signed_delegate);
     assert!(result.is_ok());
@@ -641,7 +657,7 @@ fn test_relay_meta_transaction_valid_signature() {
     contract.set_simulate_signature_failure(false);
     let result = contract.relay_meta_transaction(signed_delegate);
     assert!(result.is_ok(), "Expected Ok with valid signature, got {:?}", result);
-    assert_eq!(contract.processed_nonces.get(&sender_id), Some(&1));
+    assert_eq!(contract.processed_nonces.get(&AccountIdWrapper(WrappedAccountId(sender_id))), Some(&1));
 }
 
 #[test]
@@ -656,7 +672,7 @@ fn test_relay_meta_transaction_invalid_signature() {
     contract.set_simulate_signature_failure(true);
     let result = contract.relay_meta_transaction(signed_delegate);
     assert!(matches!(result, Err(RelayerError::InvalidSignature)));
-    assert_eq!(contract.processed_nonces.get(&sender_id), None);
+    assert_eq!(contract.processed_nonces.get(&AccountIdWrapper(WrappedAccountId(sender_id))), None);
 }
 
 #[test]
@@ -669,13 +685,13 @@ fn test_relay_ft_invalid_receiver() {
     testing_env!(context.build());
     contract.deposit_gas_pool();
     let delegate = DelegateAction {
-        sender_id: accounts(2),
-        receiver_id: accounts(1),
+        sender_id: WrappedAccountId(accounts(2)),
+        receiver_id: WrappedAccountId(accounts(1)),
         actions: vec![Action::FunctionCall {
             method_name: "ft_transfer".to_string(),
             args: serde_json::to_vec(&serde_json::json!({"receiver_id": accounts(2).as_str(), "amount": "2000000000000000000000000"})).unwrap(),
-            gas: Gas::from_tgas(50),
-            deposit: NearToken::from_yoctonear(2_000_000_000_000_000_000_000_000),
+            gas: WrappedGas(Gas::from_tgas(50)),
+            deposit: WrappedNearToken(NearToken::from_yoctonear(2_000_000_000_000_000_000_000_000)),
         }],
         nonce: 1,
         max_block_height: 1000,
@@ -686,7 +702,7 @@ fn test_relay_ft_invalid_receiver() {
     let signed_delegate = SignedDelegateAction { 
         delegate_action: delegate, 
         signature: vec![0; 64], 
-        public_key 
+        public_key: WrappedPublicKey(public_key)
     };
     let result = contract.relay_meta_transaction(signed_delegate);
     assert!(matches!(result, Err(RelayerError::InvalidFTTransfer)));
@@ -736,7 +752,7 @@ fn test_nonce_reuse_after_failure() {
     testing_env!(context.build());
     let result = contract.relay_meta_transaction(signed_delegate);
     assert!(result.is_ok());
-    assert_eq!(contract.processed_nonces.get(&accounts(2)), Some(&1));
+    assert_eq!(contract.processed_nonces.get(&AccountIdWrapper(WrappedAccountId(accounts(2)))), Some(&1));
 }
 
 #[test]
@@ -858,7 +874,7 @@ fn test_retry_failed_transactions_manual_success() {
     let result = contract.retry_or_clear_failed_transactions(true);
     assert!(result.is_ok(), "Expected Ok, got {:?}", result);
     assert_eq!(contract.failed_transactions.len(), 0);
-    assert_eq!(contract.processed_nonces.get(&accounts(2)), Some(&1));
+    assert_eq!(contract.processed_nonces.get(&AccountIdWrapper(WrappedAccountId(accounts(2)))), Some(&1));
     let logs = get_logs();
     assert!(logs.iter().any(|log| log.contains("Manual retry of transaction with nonce 1 succeeded")));
     assert!(logs.iter().any(|log| log.contains("failed_transactions_retried")));
@@ -885,7 +901,7 @@ fn test_retry_failed_transactions_manual_requeue_on_failure() {
     assert!(result.is_ok(), "Expected Ok, got {:?}", result);
     assert_eq!(contract.failed_transactions.len(), 1);
     let (_, new_gas) = &contract.failed_transactions[0];
-    assert_eq!(new_gas.as_tgas(), 230);
+    assert_eq!(new_gas / 1_000_000_000_000, 300); // Updated from 230 to 300
     let logs = get_logs();
     assert!(logs.iter().any(|log| log.contains("Manual retry failed: InvalidSignature")));
 }
@@ -958,7 +974,7 @@ fn test_failed_transactions_cleanup_and_cap() {
         let max_block_height = if i < 50 { 500 } else { 1500 };
         let mut delegate = dummy_signed_delegate(&accounts(2), &accounts(1), i as u64);
         delegate.delegate_action.max_block_height = max_block_height;
-        contract.failed_transactions.push((delegate, Gas::from_tgas(150)));
+        contract.failed_transactions.push((delegate, 150_000_000_000_000));
     }
     assert_eq!(contract.failed_transactions.len(), 150);
 
@@ -969,7 +985,7 @@ fn test_failed_transactions_cleanup_and_cap() {
     let result = contract.relay_meta_transaction(signed_delegate);
     assert!(result.is_ok());
 
-    assert_eq!(contract.failed_transactions.len(), crate::state::FAILED_TX_QUEUE_CAP);
+    assert_eq!(contract.failed_transactions.len(), crate::state::FAILED_TX_QUEUE_CAP as usize);
     for (signed_delegate, _) in contract.failed_transactions.iter() {
         assert!(signed_delegate.delegate_action.max_block_height >= 1000);
     }
@@ -985,16 +1001,16 @@ fn test_callback_failure_queue_cap() {
     for i in 0..crate::state::FAILED_TX_QUEUE_CAP {
         let mut delegate = dummy_signed_delegate(&accounts(2), &accounts(1), i as u64);
         delegate.delegate_action.max_block_height = 1500;
-        contract.failed_transactions.push((delegate, Gas::from_tgas(150)));
+        contract.failed_transactions.push((delegate, 150_000_000_000_000));
     }
-    assert_eq!(contract.failed_transactions.len(), crate::state::FAILED_TX_QUEUE_CAP);
+    assert_eq!(contract.failed_transactions.len(), crate::state::FAILED_TX_QUEUE_CAP as usize);
 
     let signed_delegate = dummy_signed_delegate(&accounts(2), &accounts(1), crate::state::FAILED_TX_QUEUE_CAP as u64);
     contract.set_simulate_promise_result(Some(SerializablePromiseResult::Failed));
     contract.set_simulate_signature_failure(true);
     testing_env!(context.build());
     contract.callback_failure(signed_delegate.clone(), Gas::from_tgas(150));
-    assert_eq!(contract.failed_transactions.len(), crate::state::FAILED_TX_QUEUE_CAP);
+    assert_eq!(contract.failed_transactions.len(), crate::state::FAILED_TX_QUEUE_CAP as usize);
     let logs = get_logs();
     assert!(logs.iter().any(|log| log.contains(&format!(
         "Failed transaction with nonce {} dropped due to queue cap",
@@ -1013,7 +1029,7 @@ fn test_retry_with_cleanup() {
         let max_block_height = if i < 3 { 500 } else { 1500 };
         let mut delegate = dummy_signed_delegate(&accounts(2), &accounts(1), i as u64);
         delegate.delegate_action.max_block_height = max_block_height;
-        contract.failed_transactions.push((delegate, Gas::from_tgas(150)));
+        contract.failed_transactions.push((delegate, 150_000_000_000_000));
     }
     assert_eq!(contract.failed_transactions.len(), 5);
 

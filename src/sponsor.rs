@@ -1,10 +1,11 @@
-use near_sdk::{env, AccountId, Promise, PublicKey};
+use near_sdk::{env, AccountId, Promise, PublicKey, NearToken, Gas};
 use near_sdk::json_types::U128;
 use serde_json;
 use core::num::NonZeroU128;
-use crate::state::Relayer;
+use crate::state::{Relayer, AccountIdWrapper};
 use crate::errors::RelayerError;
 use crate::events::RelayerEvent;
+use crate::types::{WrappedAccountId};
 
 impl Relayer {
     pub fn sponsor_account(
@@ -27,15 +28,15 @@ impl Relayer {
                 .map_err(|_| RelayerError::InvalidAccountId)?
         };
 
-        if self.processed_nonces.contains_key(&new_account_id) {
+        if self.processed_nonces.contains_key(&AccountIdWrapper::from(WrappedAccountId(new_account_id.clone()))) {
             return Err(RelayerError::AccountExists);
         }
-        if env::account_balance() < self.min_gas_pool.checked_add(self.sponsor_amount).unwrap() {
+        if env::account_balance().as_yoctonear() < self.min_gas_pool.checked_add(self.sponsor_amount).unwrap() {
             return Err(RelayerError::InsufficientBalance);
         }
 
         let mut promise = if is_implicit {
-            Promise::new(new_account_id.clone()).transfer(self.sponsor_amount)
+            Promise::new(new_account_id.clone()).transfer(NearToken::from_yoctonear(self.sponsor_amount))
         } else {
             let root_account = if env::current_account_id().as_str().contains(".testnet") { "testnet" } else { "near" }
                 .parse()
@@ -46,8 +47,8 @@ impl Relayer {
                     "new_account_id": new_account_id.as_str(),
                     "new_public_key": public_key
                 })).unwrap(),
-                self.sponsor_amount,
-                self.default_gas,
+                NearToken::from_yoctonear(self.sponsor_amount),
+                Gas::from_gas(self.default_gas),
             )
         };
 
@@ -73,6 +74,6 @@ impl Relayer {
     }
 
     pub fn get_sponsor_amount(&self) -> U128 {
-        U128(self.sponsor_amount.as_yoctonear())
+        U128(self.sponsor_amount)
     }
 }
