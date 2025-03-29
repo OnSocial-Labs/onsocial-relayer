@@ -1,6 +1,7 @@
 use near_sdk::env;
+use near_sdk::borsh::{self, BorshSerialize, BorshDeserialize, BorshSchema}; // Import borsh traits
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, BorshSerialize, BorshDeserialize, BorshSchema, Clone)]
 pub enum RelayerError {
     InsufficientGasPool,
     InvalidNonce,

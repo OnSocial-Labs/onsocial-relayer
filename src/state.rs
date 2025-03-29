@@ -1,7 +1,8 @@
-use near_sdk::{AccountId};
+use near_sdk::{env, AccountId};
 use near_sdk::borsh::{self, BorshSchema, BorshSerialize, BorshDeserialize};
 use std::collections::HashMap;
 use crate::types::{SignedDelegateAction, WrappedAccountId};
+use crate::errors::RelayerError;
 
 pub const FAILED_TX_QUEUE_CAP: u32 = 100;
 
@@ -29,10 +30,12 @@ pub struct Relayer {
     pub min_ft_payment: u128,
     pub whitelisted_contracts: Vec<AccountIdWrapper>,
     pub processed_nonces: HashMap<AccountIdWrapper, u64>,
-    pub failed_transactions: Vec<(SignedDelegateAction, u64)>,
+    pub failed_transactions: Vec<(SignedDelegateAction, u64, Option<RelayerError>)>,
     pub default_gas: u64,
     pub gas_buffer: u64,
     pub admins: Vec<AccountIdWrapper>,
+    pub sponsored_accounts: HashMap<AccountIdWrapper, bool>,
+    pub default_max_block_height_delta: u64, // Added for Option 2, set to 300
     #[cfg(test)]
     pub simulate_signature_failure: bool,
     #[cfg(test)]
@@ -67,6 +70,8 @@ impl Relayer {
             default_gas: 150_000_000_000_000, // 150 TGas
             gas_buffer: 50_000_000_000_000,   // 50 TGas
             admins,
+            sponsored_accounts: HashMap::new(),
+            default_max_block_height_delta: 300, // Set to 300 blocks (~5-10 minutes)
             #[cfg(test)]
             simulate_signature_failure: false,
             #[cfg(test)]
@@ -76,7 +81,7 @@ impl Relayer {
 
     pub fn clean_failed_transactions(&mut self) {
         let current_height = near_sdk::env::block_height();
-        self.failed_transactions.retain(|(signed_delegate, _)| {
+        self.failed_transactions.retain(|(signed_delegate, _, _)| {
             signed_delegate.delegate_action.max_block_height >= current_height
         });
         while self.failed_transactions.len() > FAILED_TX_QUEUE_CAP as usize {
@@ -85,6 +90,38 @@ impl Relayer {
                 "Dropped transaction with nonce {} due to queue cap",
                 removed.0.delegate_action.nonce
             ));
+        }
+    }
+
+    pub fn set_gas_config(&mut self, default_gas_tgas: u64, gas_buffer_tgas: u64) -> Result<(), RelayerError> {
+        let caller = env::predecessor_account_id();
+        if !self.admins.iter().any(|admin| admin.0.0 == caller) {
+            return Err(RelayerError::Unauthorized);
+        }
+        if default_gas_tgas < 50 || gas_buffer_tgas < 10 {
+            return Err(RelayerError::InvalidGasConfig);
+        }
+        self.default_gas = default_gas_tgas * 1_000_000_000_000; // TGas to Gas
+        self.gas_buffer = gas_buffer_tgas * 1_000_000_000_000;  // TGas to Gas
+        env::log_str(&format!("Gas config updated: default={} TGas, buffer={} TGas by {}", default_gas_tgas, gas_buffer_tgas, caller.as_str()));
+        Ok(())
+    }
+
+    pub fn callback_key_removal(&mut self, account_id: AccountId, _nonce: u64) {
+        #[cfg(test)]
+        let promise_result = self.simulate_promise_result
+            .clone()
+            .unwrap_or(crate::types::SerializablePromiseResult::Successful(vec![]));
+        #[cfg(not(test))]
+        let promise_result = crate::types::SerializablePromiseResult::from(env::promise_result(0));
+
+        match promise_result {
+            crate::types::SerializablePromiseResult::Successful(_) => {
+                env::log_str(&format!("Key successfully removed for account {}", account_id.as_str()));
+            }
+            crate::types::SerializablePromiseResult::Failed => {
+                env::log_str(&format!("Key removal failed for account {}", account_id.as_str()));
+            }
         }
     }
 }

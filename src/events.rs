@@ -14,4 +14,7 @@ pub enum RelayerEvent {
     FailedTransactionsCleared { count: u32 },
     #[event_version("1.0.0")]
     FailedTransactionsRetried { count: u32 },
+    // New event for key removal
+    #[event_version("1.0.0")]
+    FunctionCallKeyRemoved { account_id: AccountId, public_key: PublicKey },
 }
