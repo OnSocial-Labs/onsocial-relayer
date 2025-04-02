@@ -1,20 +1,10 @@
-use near_sdk::{near, AccountId, NearToken, PublicKey};
+use near_sdk::{AccountId, near};
 
 #[near(event_json(standard = "nep297"))]
+#[derive(Debug)]
 pub enum RelayerEvent {
     #[event_version("1.0.0")]
-    MetaTransactionRelayed { sender_id: AccountId, nonce: u64 },
+    AuthAdded { auth_account: AccountId },
     #[event_version("1.0.0")]
-    AccountSponsored { account_id: AccountId, public_key: PublicKey, is_implicit: bool },
-    #[event_version("1.0.0")]
-    GasPoolDeposited { amount: NearToken, depositor: AccountId },
-    #[event_version("1.0.0")]
-    FunctionCallKeyAdded { account_id: AccountId, public_key: PublicKey, receiver_id: AccountId },
-    #[event_version("1.0.0")]
-    FailedTransactionsCleared { count: u32 },
-    #[event_version("1.0.0")]
-    FailedTransactionsRetried { count: u32 },
-    // New event for key removal
-    #[event_version("1.0.0")]
-    FunctionCallKeyRemoved { account_id: AccountId, public_key: PublicKey },
+    AuthRemoved { auth_account: AccountId },
 }

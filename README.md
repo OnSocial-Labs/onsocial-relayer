@@ -1,29 +1,37 @@
-# OnSocial Relayer Contract
+# OnSocialRelayer
 
-A NEAR smart contract designed for meta-transactions, account sponsoring, and gas management within the OnSocial ecosystem.
-
-## Overview
-
-The OnSocial Relayer contract enables gasless transactions, account creation sponsorship, and gas pool management on the NEAR blockchain. It supports meta-transactions to whitelisted contracts, sponsors new accounts (named or implicit), and provides admin controls for configuration. Built with `near-sdk`, it includes robust error handling, NEP-297 event logging, and a retry mechanism for failed transactions.
+`OnSocialRelayer` is a NEAR Protocol smart contract designed to facilitate meta-transactions, gas pool management, account sponsoring, and basic **chain abstraction** for cross-chain signature requests. It enables authorized users to relay transactions, sponsors new NEAR accounts, and supports chain-agnostic signature requests via an MPC (Multi-Party Computation) contract integration.
 
 ## Features
 
-- **Meta-Transaction Relaying**: Executes signed transactions on behalf of users to whitelisted contracts.
-- **Account Sponsoring**: Funds creation of named (e.g., `user.testnet`) or implicit (64-character hex) accounts.
-- **Gas Pool Management**: Funds operations via a NEAR deposit pool.
-- **Admin Controls**: Configurable whitelist, gas limits, sponsor amounts, and admin list.
-- **Failed Transaction Queue**: Queues and retries failed transactions (up to 100) with increased gas (120% + buffer, capped at 300 TGas).
-- **Event Emission**: Logs actions using NEP-297 events for transparency.
-- **Testing Utilities**: Simulation methods for signature and promise results in test mode.
+- **Meta-Transaction Relaying**: Execute signed delegate actions on behalf of users.
+- **Gas Pool Management**: Deposit NEAR to fund transactions, with excess offloaded to a recipient.
+- **Account Sponsoring**: Create new NEAR accounts with a predefined amount.
+- **Chain Abstraction**: Relay signature requests to a target chain’s MPC contract (e.g., for cross-chain operations).
+- **Admin Controls**: Manage authorized accounts and settings, restricted to admins.
+- **Event Logging**: Emit NEP-297 events for key actions (e.g., adding/removing auth accounts).
+
+## Chain Abstraction
+
+The contract supports a basic form of chain abstraction through the `ChainSignatureRequest` action, allowing users to request signatures from an MPC contract on a specified target chain. This is useful for cross-chain interactions where NEAR acts as a relay hub. The process:
+
+1. Users submit a `SignedDelegateAction` with a `ChainSignatureRequest` action.
+2. The contract forwards the request to the specified MPC contract (e.g., `mpc.target-chain.near`) with a payload, derivation path, and gas allocation.
+3. The MPC contract processes the signature, abstracting the target chain’s specifics from the user.
+
+### Example Use Case
+
+Request a signature for an Ethereum transaction:
+
+- Action: `ChainSignatureRequest { target_chain: "eth|mpc.eth.near", derivation_path: "m/44'/60'/0'/0/0", payload: [/* tx data */] }`
+- Relayed to: `mpc.eth.near` for signing.
 
 ## Prerequisites
 
-- **NEAR Wallet**: Use [wallet.testnet.near.org](https://wallet.testnet.near.org) for Testnet or [wallet.near.org](https://wallet.near.org) for Mainnet.
-- **NEAR CLI**: Install via `npm install -g near-cli`.
-- **Rust Toolchain**: Install with `rustup install stable` (tested with Rust 1.74+ as of March 2025) and add WASM target via `rustup target add wasm32-unknown-unknown`.
-- **cargo-near**: Install with `cargo install cargo-near`.
-- **Dependencies**: Requires `ed25519-dalek` for signature verification (included in `Cargo.toml`).
-- **Basic NEAR Knowledge**: Familiarity with accounts, keys, and transactions.
+- [Rust](https://www.rust-lang.org/tools/install) (with `cargo`)
+- [NEAR CLI](https://docs.near.org/tools/near-cli#installation)
+- NEAR account for deployment (e.g., via [NEAR Wallet](https://wallet.near.org/))
+- Optional: Access to an MPC contract for chain abstraction testing.
 
 ## Installation
 
@@ -35,318 +43,118 @@ The OnSocial Relayer contract enables gasless transactions, account creation spo
 Install Dependencies:
 bash
 
-rustup target add wasm32-unknown-unknown
-cargo install cargo-near
+cargo build --release
 
+Set Up NEAR Environment:
+Log in to NEAR CLI:
+bash
+
+near login
+
+Ensure you have a NEAR account and sufficient funds.
+
+Building and Deploying
 Build the Contract:
 bash
 
 cargo build --target wasm32-unknown-unknown --release
 
-Contract Methods
-Initialization
-new(payment_ft_contract: Option<AccountId>, min_ft_payment: U128, whitelisted_contracts: Vec<AccountId>)
-Initializes the contract with defaults: 0.1 NEAR sponsor amount, 150 TGas default gas, 50 TGas buffer, 300-block max height delta (~5-10 minutes).
+Output: target/wasm32-unknown-unknown/release/onsocialrelayer.wasm.
 
-Args: Optional FT payment contract, minimum FT payment (yoctoNEAR), initial whitelist.
-
-Defaults: Adds social.near, social.tkn.near, USDC Testnet (3e2210e...), USDC Mainnet (1720862...), and admins (onsocial.sputnik-dao.near, onsocial.testnet, onsocial.near).
-
-Public Methods
-deposit_gas_pool() (Payable)
-Deposits NEAR into the gas pool.
-
-Requires: Attached deposit > 0.
-
-Event: GasPoolDeposited { amount, depositor }.
-
-on_receive_near() (Payable)
-Handles incoming NEAR transfers to the gas pool.
-
-Requires: Amount > 0.
-
-Event: GasPoolDeposited { amount, depositor }.
-
-get_gas_pool() -> U128
-Returns the current gas pool balance in yoctoNEAR.
-
-get_sponsor_amount() -> U128
-Returns the sponsor amount in yoctoNEAR (default: 0.1 NEAR).
-
-get_admins() -> Vec<AccountId>
-Returns the list of admin account IDs.
-
-get_default_gas() -> Gas
-Returns the default gas limit (default: 150 TGas).
-
-get_gas_buffer() -> Gas
-Returns the gas buffer (default: 50 TGas).
-
-get_failed_transactions_count() -> u32
-Returns the number of queued failed transactions.
-
-get_failed_transactions() -> Vec<(SignedDelegateAction, u64, Option<RelayerError>)>
-Returns the list of failed transactions with gas and error details.
-
-get_failed_transactions_by_sender(sender_id: AccountId) -> Vec<(SignedDelegateAction, u64, Option<RelayerError>)>
-Returns failed transactions for a specific sender.
-
-get_processed_nonce(account_id: AccountId) -> Option<u64>
-Returns the last processed nonce for an account.
-
-get_max_block_height_delta() -> u64
-Returns the default max block height delta (default: 300 blocks).
-
-get_pending_transaction(sender_id: AccountId, nonce: u64) -> Option<(u64, bool)>
-Checks the status of a pending transaction (max block height, expired).
-
-sponsor_account(account_name: String, public_key: PublicKey, add_function_call_key: bool, is_implicit: bool, signed_delegate: Option<SignedDelegateAction>) -> Result<Promise, RelayerError>
-Sponsors a new account via direct call (self-only) or signed delegate action.
-
-Args: Account name, public key, function call key flag, implicit flag, optional delegate.
-
-Requires: Sufficient gas pool, unique account ID, admin or valid signature.
-
-Events: AccountSponsored, FunctionCallKeyAdded (if key added).
-
-relay_meta_transaction(signed_delegate: SignedDelegateAction) -> Result<(), RelayerError>
-Relays a signed meta-transaction.
-
-Args: Signed delegate action (sender, receiver, actions, nonce, max block height, signature, public key).
-
-Requires: Valid nonce, Ed25519 signature, whitelisted receiver, sufficient gas.
-
-Event: MetaTransactionRelayed.
-
-import_account(account_id: AccountId, public_key: PublicKey, signed_delegate: SignedDelegateAction) -> Result<Promise, RelayerError>
-Imports an existing account by adding a function call key.
-
-Requires: Valid signature, sufficient gas pool.
-
-Event: FunctionCallKeyAdded.
-
-Admin Methods
-update_whitelist(contracts: Vec<AccountId>) -> Result<(), RelayerError>
-Updates the whitelist of allowed receiver contracts.
-
-Requires: Admin caller.
-
-set_sponsor_amount(amount: U128) -> Result<(), RelayerError>
-Sets the sponsor amount (minimum 0.05 NEAR).
-
-Requires: Admin caller.
-
-set_admins(new_admins: Vec<AccountId>) -> Result<(), RelayerError>
-Updates the admin list (non-empty).
-
-Requires: Admin caller.
-
-add_function_call_key(account_id: AccountId, public_key: PublicKey, receiver_id: AccountId, method_names: Vec<String>) -> Result<(), RelayerError>
-Adds a function call key to an account.
-
-Requires: Admin caller.
-
-Event: FunctionCallKeyAdded.
-
-remove_function_call_key(account_id: AccountId, public_key: PublicKey, signed_delegate: SignedDelegateAction) -> Result<Promise, RelayerError>
-Removes a function call key from an account.
-
-Requires: Valid signature, sufficient gas.
-
-Event: FunctionCallKeyRemoved.
-
-set_gas_config(default_gas_tgas: u64, gas_buffer_tgas: u64) -> Result<(), RelayerError>
-Sets gas limits (minimum 50 TGas default, 10 TGas buffer).
-
-Requires: Admin caller.
-
-set_max_block_height_delta(delta: u64) -> Result<(), RelayerError>
-Sets the max block height delta (100-10,000 blocks).
-
-Requires: Admin caller.
-
-retry_or_clear_failed_transactions(retry: bool) -> Result<(), RelayerError>
-Retries (120% gas + buffer, capped at 300 TGas) or clears failed transactions.
-
-Args: true to retry, false to clear.
-
-Requires: Admin caller.
-
-Events: FailedTransactionsRetried, FailedTransactionsCleared.
-
-Test-Only Methods
-set_simulate_signature_failure(fail: bool)
-Simulates signature verification failure for testing.
-
-set_simulate_promise_result(result: Option<SerializablePromiseResult>)
-Simulates promise outcomes for testing.
-
-Events (NEP-297)
-MetaTransactionRelayed { sender_id: AccountId, nonce: u64 }
-
-AccountSponsored { account_id: AccountId, public_key: PublicKey, is_implicit: bool }
-
-GasPoolDeposited { amount: NearToken, depositor: AccountId }
-
-FunctionCallKeyAdded { account_id: AccountId, public_key: PublicKey, receiver_id: AccountId }
-
-FunctionCallKeyRemoved { account_id: AccountId, public_key: PublicKey }
-
-FailedTransactionsCleared { count: u32 }
-
-FailedTransactionsRetried { count: u32 }
-
-View Events:
+Deploy to NEAR Testnet:
 bash
 
-near view $CONTRACT_ID --logs
+near deploy --accountId your-account.near --wasmFile target/wasm32-unknown-unknown/release/onsocialrelayer.wasm
 
-Error Types (RelayerError)
-InsufficientGasPool: Gas pool below 1 NEAR.
-
-InvalidNonce: Nonce reused or out of sequence.
-
-NotWhitelisted: Receiver not in whitelist.
-
-InvalidSignature: Ed25519 signature verification failed.
-
-NoActions: Delegate action has no operations.
-
-InvalidFTTransfer: FT transfer not to relayer or wrong method/contract.
-
-InsufficientDeposit: FT payment below minimum.
-
-InsufficientBalance: Insufficient funds for sponsoring.
-
-AccountExists: Account already sponsored.
-
-Unauthorized: Caller not an admin.
-
-InvalidSponsorAmount: Amount below 0.05 NEAR.
-
-InvalidKeyAction: Invalid key action parameters.
-
-InvalidAccountId: Malformed account name or implicit ID.
-
-ExpiredTransaction: Block height exceeds max_block_height.
-
-InvalidGasConfig: Gas settings below minimums.
-
-NoFailedTransactions: No transactions to retry/clear.
-
-Dependencies
-Defined in Cargo.toml:
-near-sdk = "5.11.0": NEAR smart contract framework.
-
-serde = { version = "1.0", features = ["derive"] }: Serialization/deserialization.
-
-serde_json = "1.0": JSON handling.
-
-borsh = { version = "1.5.7", features = ["unstable__schema"] }: Borsh serialization.
-
-ed25519-dalek = "2.1.1": Ed25519 signature verification.
-
-Environment Variables
-Set for convenience:
+Initialize the Contract:
 bash
 
-export CONTRACT_ID="onsocialrelayer.testnet"
-export ACCOUNT_ID="youraccount.testnet"
-export ADMIN_ID="onsocial.testnet"
+near call your-account.near new '{"admins": ["admin.near"], "initial_auth_account": "user.near", "initial_auth_key": "ed25519:YOUR_PUBLIC_KEY", "offload_recipient": "recipient.near"}' --accountId your-account.near
 
-Usage Examples
-Deposit to Gas Pool
+Usage
+Depositing to Gas Pool
 bash
 
-near call $CONTRACT_ID deposit_gas_pool --accountId $ACCOUNT_ID --amount 5
+near call your-account.near deposit_gas_pool --accountId your-account.near --deposit 5
 
-Sponsor an Account
+Relaying a Meta-Transaction
+Basic transfer:
 bash
 
-near call $CONTRACT_ID sponsor_account '{"account_name": "user123", "public_key": "ed25519:abc123...", "add_function_call_key": false, "is_implicit": false}' --accountId $CONTRACT_ID
+near call your-account.near relay_meta_transaction '{"signed_delegate": {"delegate_action": {"sender_id": "user.near", "receiver_id": "target.near", "actions": [{"Transfer": {"deposit": "1000000000000000000000000"}}], "nonce": 1, "max_block_height": 1000}, "signature": "YOUR_SIGNATURE", "public_key": "ed25519:YOUR_PUBLIC_KEY", "session_nonce": 1}}' --accountId your-account.near
 
-Note: Direct calls are restricted to the contract itself; use a signed delegate action for external calls.
-Relay a Meta-Transaction
-json
-
-{
-  "signed_delegate": {
-    "delegate_action": {
-      "sender_id": "user.testnet",
-      "receiver_id": "social.near",
-      "actions": [
-        {
-          "Transfer": {
-            "deposit": "1000000000000000000000000"
-          }
-        }
-      ],
-      "nonce": 1,
-      "max_block_height": 1000000
-    },
-    "signature": "ed25519:<64-byte-hex-signature>",
-    "public_key": "ed25519:xyz789..."
-  }
-}
-
+Relaying a Chain Signature Request
+Request a signature for a target chain:
 bash
 
-near call $CONTRACT_ID relay_meta_transaction '<json-above>' --accountId $ACCOUNT_ID
+near call your-account.near relay_meta_transaction '{"signed_delegate": {"delegate_action": {"sender_id": "user.near", "receiver_id": "mpc.target-chain.near", "actions": [{"ChainSignatureRequest": {"target_chain": "eth|mpc.eth.near", "derivation_path": "m/44'/60'/0'/0/0", "payload": [1, 2, 3]}}], "nonce": 1, "max_block_height": 1000}, "signature": "YOUR_SIGNATURE", "public_key": "ed25519:YOUR_PUBLIC_KEY", "session_nonce": 1}}' --accountId your-account.near
 
-Note: Generate the signature using the sender’s private key over the Borsh-serialized DelegateAction.
-Check Gas Pool
+Sponsoring an Account
 bash
 
-near view $CONTRACT_ID get_gas_pool
+near call your-account.near sponsor_account '{"account_name": "newuser", "public_key": "ed25519:NEW_PUBLIC_KEY"}' --accountId your-account.near
 
-Deployment Instructions
-Build:
+Admin Operations
+Add an authorized account:
 bash
 
-cargo build --target wasm32-unknown-unknown --release
-
-Deploy to Testnet:
-bash
-
-cargo near deploy --account-id $ACCOUNT_ID --wasm-file target/wasm32-unknown-unknown/release/onsocialrelayer.wasm
-
-Initialize:
-bash
-
-near call $CONTRACT_ID new '{"payment_ft_contract": null, "min_ft_payment": "0", "whitelisted_contracts": ["social.near"]}' --accountId $ACCOUNT_ID
-
-Verify:
-bash
-
-near view $CONTRACT_ID get_admins
+near call your-account.near add_auth_account '{"auth_account": "newuser.near", "auth_public_key": "ed25519:NEW_PUBLIC_KEY"}' --accountId admin.near
 
 Testing
-Run unit tests:
+Run Tests:
 bash
 
 cargo test
 
-Tests cover initialization, gas pool deposits, account sponsoring, meta-transaction relaying, admin functions, and edge cases.
+Test Coverage:
+Admin functions, gas pool, relaying, sponsoring, and view methods.
 
-Uses near-sdk’s testing framework with simulated environments.
+Chain abstraction: Limited testing for ChainSignatureRequest (no signature verification yet).
+
+Notes:
+Signature verification is not implemented; tests use dummy signatures.
+
+Add tests for ChainSignatureRequest with a mock MPC contract for full coverage.
+
+Project Structure
+
+onsocialrelayer/
+├── Cargo.toml          # Dependencies and build config
+├── src/
+│   ├── lib.rs          # Main contract entry point
+│   ├── admin.rs        # Admin functions
+│   ├── errors.rs       # Custom error types
+│   ├── events.rs       # NEP-297 event definitions
+│   ├── gas_pool.rs     # Gas pool management
+│   ├── relay.rs        # Meta-transaction relaying (includes chain abstraction)
+│   ├── sponsor.rs      # Account sponsoring logic
+│   ├── state.rs        # Contract state definition
+│   ├── types.rs        # Data structures (includes ChainSignatureRequest)
+│   └── tests/          # Unit tests
+
+Configuration
+Gas Pool Limits:
+min_gas_pool: 1 NEAR
+
+max_gas_pool: 500 NEAR
+
+Sponsor Amount: 0.1 NEAR
+
+Max Gas per Action: 300 TGas
+
+Chain Abstraction: Configurable via target_chain in ChainSignatureRequest.
 
 Contributing
-Bugs: Report via GitHub issues.
+Fork the repository.
 
-Features: Suggest via issues or submit pull requests (PRs).
+Create a feature branch (git checkout -b feature/your-feature).
 
-Code: Fork the repo, create a feature branch, add tests, and submit a PR.
+Commit changes (git commit -m "Add your feature").
+
+Push to the branch (git push origin feature/your-feature).
+
+Open a pull request.
 
 License
-MIT License.
-Troubleshooting
-Insufficient Gas Pool: Deposit more NEAR with deposit_gas_pool.
-
-Invalid Signature: Verify the signature matches the sender’s public key and serialized DelegateAction.
-
-Not Whitelisted: Request an admin to add the contract via update_whitelist.
-
-Transaction Expired: Increase max_block_height in the meta-transaction.
-
-Queued Failed Transactions: Check with get_failed_transactions_count and use retry_or_clear_failed_transactions.
+MIT License. See LICENSE for details.
 

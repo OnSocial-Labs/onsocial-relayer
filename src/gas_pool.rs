@@ -1,24 +1,16 @@
-use near_sdk::env;
-use near_sdk::json_types::U128;
+use near_sdk::{env, NearToken, Promise};
 use crate::state::Relayer;
-use crate::events::RelayerEvent;
+use crate::errors::RelayerError;
 
-impl Relayer {
-    pub fn deposit_gas_pool(&mut self) {
-        let amount = env::attached_deposit();
-        assert!(amount.as_yoctonear() > 0, "Deposit must be positive");
-        self.gas_pool = self.gas_pool.checked_add(amount.as_yoctonear()).unwrap();
-        RelayerEvent::GasPoolDeposited { amount, depositor: env::predecessor_account_id() }.emit();
-    }
+pub fn deposit_gas_pool(relayer: &mut Relayer) -> Result<(), RelayerError> {
+    let deposit = env::attached_deposit().as_yoctonear();
+    relayer.gas_pool += deposit;
 
-    pub fn on_receive_near(&mut self) {
-        let amount = env::attached_deposit();
-        assert!(amount.as_yoctonear() > 0, "Received amount must be positive");
-        self.gas_pool = self.gas_pool.checked_add(amount.as_yoctonear()).unwrap();
-        RelayerEvent::GasPoolDeposited { amount, depositor: env::predecessor_account_id() }.emit();
+    if relayer.gas_pool > relayer.max_gas_pool {
+        let excess = relayer.gas_pool - relayer.max_gas_pool;
+        relayer.gas_pool = relayer.max_gas_pool;
+        Promise::new(relayer.offload_recipient.clone())
+            .transfer(NearToken::from_yoctonear(excess));
     }
-
-    pub fn get_gas_pool(&self) -> U128 {
-        U128(self.gas_pool)
-    }
+    Ok(())
 }

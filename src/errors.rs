@@ -1,27 +1,17 @@
-use near_sdk::env;
-use near_sdk::borsh::{self, BorshSerialize, BorshDeserialize, BorshSchema}; // Import borsh traits
+use near_sdk::{env, FunctionError};
+use near_sdk::borsh::{BorshSerialize, BorshDeserialize};
 
-#[derive(Debug, PartialEq, BorshSerialize, BorshDeserialize, BorshSchema, Clone)]
+#[derive(Debug, PartialEq, BorshSerialize, BorshDeserialize)]
 pub enum RelayerError {
+    Unauthorized,
     InsufficientGasPool,
     InvalidNonce,
-    NotWhitelisted,
-    InvalidSignature,
-    NoActions,
-    InvalidFTTransfer,
-    InsufficientDeposit,
-    InsufficientBalance,
-    AccountExists,
-    Unauthorized,
-    InvalidSponsorAmount,
-    InvalidKeyAction,
-    InvalidAccountId,
     ExpiredTransaction,
-    InvalidGasConfig,
-    NoFailedTransactions,
+    ContractPaused,
+    InvalidAccountId,
 }
 
-impl near_sdk::FunctionError for RelayerError {
+impl FunctionError for RelayerError {
     fn panic(&self) -> ! {
         env::panic_str(&format!("RelayerError: {:?}", self))
     }
