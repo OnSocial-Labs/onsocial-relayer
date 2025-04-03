@@ -42,7 +42,7 @@ fn create_signed_delegate(sender_id: AccountId, receiver_id: AccountId, actions:
 // Admin Tests
 #[test]
 fn test_add_auth_account_success() {
-    let (mut contract, mut context) = setup_contract();
+    let (mut contract, mut _context) = setup_contract();
     let new_auth_account = accounts(3);
     let new_auth_key: PublicKey = "ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW".parse().unwrap();
 
@@ -80,12 +80,112 @@ fn test_remove_auth_account_success() {
 
 #[test]
 fn test_set_offload_recipient_success() {
-    let (mut contract, _context) = setup_contract(); // Fixed: `_context` and no `mut`
+    let (mut contract, _context) = setup_contract();
     let new_recipient = accounts(3);
 
     let result = contract.set_offload_recipient(new_recipient.clone());
     assert!(result.is_ok(), "Setting offload recipient should succeed");
     assert_eq!(contract.relayer.offload_recipient, new_recipient, "Offload recipient should be updated");
+}
+
+#[test]
+fn test_add_admin_success() {
+    let (mut contract, _context) = setup_contract();
+    let new_admin = accounts(3);
+
+    let result = contract.add_admin(new_admin.clone());
+    assert!(result.is_ok(), "Adding admin should succeed");
+    assert!(contract.relayer.admins.contains(&new_admin), "New admin should be in the list");
+    assert_eq!(contract.relayer.admins.len(), 2, "Admin list should have 2 entries");
+}
+
+#[test]
+fn test_add_admin_unauthorized() {
+    let (mut contract, mut context) = setup_contract();
+    context.predecessor_account_id(accounts(3)); // Non-admin
+    testing_env!(context.build());
+
+    let new_admin = accounts(4);
+
+    let result = contract.add_admin(new_admin);
+    assert!(matches!(result, Err(RelayerError::Unauthorized)), "Non-admin should not add admin");
+}
+
+#[test]
+fn test_add_admin_duplicate() {
+    let (mut contract, _context) = setup_contract();
+    let existing_admin = accounts(0); // Already an admin
+
+    let result = contract.add_admin(existing_admin.clone());
+    assert!(result.is_ok(), "Adding duplicate admin should succeed but not change state");
+    assert_eq!(contract.relayer.admins.len(), 1, "Admin list should not grow with duplicate");
+}
+
+#[test]
+fn test_remove_admin_success() {
+    let (mut contract, _context) = setup_contract();
+    // First, add a second admin so we can remove one
+    let new_admin = accounts(3);
+    contract.add_admin(new_admin.clone()).unwrap();
+
+    let result = contract.remove_admin(new_admin.clone());
+    assert!(result.is_ok(), "Removing admin should succeed");
+    assert!(!contract.relayer.admins.contains(&new_admin), "Admin should be removed");
+    assert_eq!(contract.relayer.admins.len(), 1, "Admin list should have 1 entry");
+}
+
+#[test]
+fn test_remove_admin_last_admin() {
+    let (mut contract, _context) = setup_contract();
+    let last_admin = accounts(0); // Only admin
+
+    let result = contract.remove_admin(last_admin);
+    assert!(matches!(result, Err(RelayerError::LastAdmin)), "Should fail when removing last admin");
+    assert_eq!(contract.relayer.admins.len(), 1, "Admin list should remain unchanged");
+}
+
+#[test]
+fn test_remove_admin_unauthorized() {
+    let (mut contract, mut context) = setup_contract();
+    context.predecessor_account_id(accounts(3)); // Non-admin
+    testing_env!(context.build());
+
+    let admin_to_remove = accounts(0);
+
+    let result = contract.remove_admin(admin_to_remove);
+    assert!(matches!(result, Err(RelayerError::Unauthorized)), "Non-admin should not remove admin");
+}
+
+#[test]
+fn test_set_sponsor_amount_success() {
+    let (mut contract, _context) = setup_contract();
+    let new_amount = 200_000_000_000_000_000_000_000; // 0.2 NEAR
+
+    let result = contract.set_sponsor_amount(new_amount.into());
+    assert!(result.is_ok(), "Setting sponsor amount should succeed");
+    assert_eq!(contract.relayer.sponsor_amount, new_amount, "Sponsor amount should be updated");
+}
+
+#[test]
+fn test_set_sponsor_amount_too_low() {
+    let (mut contract, _context) = setup_contract();
+    let too_low_amount = 5_000_000_000_000_000_000_000; // 0.005 NEAR, below 0.01 NEAR threshold
+
+    let result = contract.set_sponsor_amount(too_low_amount.into());
+    assert!(matches!(result, Err(RelayerError::AmountTooLow)), "Should fail when amount too low");
+    assert_eq!(contract.relayer.sponsor_amount, 100_000_000_000_000_000_000_000, "Sponsor amount should not change");
+}
+
+#[test]
+fn test_set_sponsor_amount_unauthorized() {
+    let (mut contract, mut context) = setup_contract();
+    context.predecessor_account_id(accounts(3)); // Non-admin
+    testing_env!(context.build());
+
+    let new_amount = 200_000_000_000_000_000_000_000; // 0.2 NEAR
+
+    let result = contract.set_sponsor_amount(new_amount.into());
+    assert!(matches!(result, Err(RelayerError::Unauthorized)), "Non-admin should not set sponsor amount");
 }
 
 // Gas Pool Tests

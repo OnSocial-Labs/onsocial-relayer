@@ -9,6 +9,8 @@ pub enum RelayerError {
     ExpiredTransaction,
     ContractPaused,
     InvalidAccountId,
+    AmountTooLow,
+    LastAdmin,
 }
 
 impl FunctionError for RelayerError {

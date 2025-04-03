@@ -68,6 +68,21 @@ impl OnSocialRelayer {
         admin::set_offload_recipient(&mut self.relayer, new_recipient)
     }
 
+    #[handle_result]
+    pub fn add_admin(&mut self, new_admin: AccountId) -> Result<(), errors::RelayerError> {
+        admin::add_admin(&mut self.relayer, new_admin)
+    }
+
+    #[handle_result]
+    pub fn remove_admin(&mut self, admin_to_remove: AccountId) -> Result<(), errors::RelayerError> {
+        admin::remove_admin(&mut self.relayer, admin_to_remove)
+    }
+
+    #[handle_result]
+    pub fn set_sponsor_amount(&mut self, new_amount: U128) -> Result<(), errors::RelayerError> {
+        admin::set_sponsor_amount(&mut self.relayer, new_amount.0)
+    }
+
     pub fn get_gas_pool(&self) -> U128 {
         U128(self.relayer.gas_pool)
     }
