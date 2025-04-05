@@ -15,4 +15,10 @@ pub enum RelayerEvent {
     SponsorAmountUpdated { new_amount: u128 },
     #[event_version("1.0.0")]
     OffloadRecipientUpdated { new_recipient: AccountId },
+    #[event_version("1.0.0")]
+    MaxGasPoolUpdated { new_max: u128 },
+    #[event_version("1.0.0")]
+    MinGasPoolUpdated { new_min: u128 },
+    #[event_version("1.0.0")]
+    LowGasPool { remaining: u128 }, // Added missing variant
 }

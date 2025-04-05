@@ -51,11 +51,10 @@ pub fn remove_admin(relayer: &mut Relayer, admin_to_remove: AccountId) -> Result
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    // Prevent removing the last admin
-    if relayer.admins.len() <= 1 {
-        return Err(RelayerError::LastAdmin);
-    }
     if let Some(index) = relayer.admins.iter().position(|admin| admin == &admin_to_remove) {
+        if relayer.admins.len() <= 1 {
+            return Err(RelayerError::LastAdmin);
+        }
         relayer.admins.swap_remove(index);
         RelayerEvent::AdminRemoved { admin_account: admin_to_remove }.emit();
     }
@@ -67,11 +66,38 @@ pub fn set_sponsor_amount(relayer: &mut Relayer, new_amount: u128) -> Result<(),
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    // Optional: Add a minimum threshold to prevent setting it too low
     if new_amount < 10_000_000_000_000_000_000_000 { // e.g., 0.01 NEAR
         return Err(RelayerError::AmountTooLow);
     }
     relayer.sponsor_amount = new_amount;
     RelayerEvent::SponsorAmountUpdated { new_amount }.emit();
+    Ok(())
+}
+
+// New function to set maximum gas pool
+pub fn set_max_gas_pool(relayer: &mut Relayer, new_max: u128) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if new_max < relayer.min_gas_pool {
+        return Err(RelayerError::AmountTooLow); // Ensure max is not less than min
+    }
+    relayer.max_gas_pool = new_max;
+    RelayerEvent::MaxGasPoolUpdated { new_max }.emit(); // New event needed
+    Ok(())
+}
+
+// New function to set minimum gas pool
+pub fn set_min_gas_pool(relayer: &mut Relayer, new_min: u128) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if new_min > relayer.max_gas_pool {
+        return Err(RelayerError::AmountTooLow); // Ensure min is not greater than max
+    }
+    relayer.min_gas_pool = new_min;
+    RelayerEvent::MinGasPoolUpdated { new_min }.emit(); // New event needed
     Ok(())
 }
