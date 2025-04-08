@@ -1,4 +1,4 @@
-use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env};
+use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env}; // Removed BorshDeserialize
 use near_sdk::json_types::U128;
 use crate::state::Relayer;
 use crate::types::SignedDelegateAction;
@@ -123,12 +123,11 @@ impl OnSocialRelayer {
         U128(self.relayer.sponsor_amount)
     }
 
-    // Callback to handle gas refunds
     #[private]
     pub fn refund_gas_callback(&mut self, initial_cost: u128) {
-        let used_gas = env::used_gas().as_tgas() as u128; // Gas actually used in TGas
-        let gas_price = 100_000_000_000; // Min gas price: 0.0001 Ⓝ/TGas in yoctoNEAR
-        let actual_cost = used_gas * gas_price; // Approximate cost in yoctoNEAR
+        let used_gas = env::used_gas().as_tgas() as u128;
+        let gas_price = 100_000_000_000; // 0.0001 Ⓝ/TGas in yoctoNEAR
+        let actual_cost = used_gas * gas_price;
         let refund = initial_cost.saturating_sub(actual_cost);
         self.relayer.gas_pool += refund;
 

@@ -20,5 +20,5 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     MinGasPoolUpdated { new_min: u128 },
     #[event_version("1.0.0")]
-    LowGasPool { remaining: u128 }, // Added missing variant
+    LowGasPool { remaining: u128 },
 }

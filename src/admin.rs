@@ -74,30 +74,28 @@ pub fn set_sponsor_amount(relayer: &mut Relayer, new_amount: u128) -> Result<(),
     Ok(())
 }
 
-// New function to set maximum gas pool
 pub fn set_max_gas_pool(relayer: &mut Relayer, new_max: u128) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
     if new_max < relayer.min_gas_pool {
-        return Err(RelayerError::AmountTooLow); // Ensure max is not less than min
+        return Err(RelayerError::AmountTooLow);
     }
     relayer.max_gas_pool = new_max;
-    RelayerEvent::MaxGasPoolUpdated { new_max }.emit(); // New event needed
+    RelayerEvent::MaxGasPoolUpdated { new_max }.emit();
     Ok(())
 }
 
-// New function to set minimum gas pool
 pub fn set_min_gas_pool(relayer: &mut Relayer, new_min: u128) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
     if new_min > relayer.max_gas_pool {
-        return Err(RelayerError::AmountTooLow); // Ensure min is not greater than max
+        return Err(RelayerError::AmountTooLow);
     }
     relayer.min_gas_pool = new_min;
-    RelayerEvent::MinGasPoolUpdated { new_min }.emit(); // New event needed
+    RelayerEvent::MinGasPoolUpdated { new_min }.emit();
     Ok(())
 }

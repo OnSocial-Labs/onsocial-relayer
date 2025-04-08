@@ -369,7 +369,7 @@ mod tests {
     fn test_relay_meta_transaction_chain_signature_success() {
         let (mut contract, mut context) = setup_contract();
         context.attached_deposit(NearToken::from_near(10));
-        context.prepaid_gas(Gas::from_tgas(350)); // Increased beyond 300 TGas due to mock environment overhead; real blockchain should fit within 300 TGas
+        context.prepaid_gas(Gas::from_tgas(290));
         testing_env!(context.build());
         contract.deposit_gas_pool().unwrap();
 
