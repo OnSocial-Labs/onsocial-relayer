@@ -4,27 +4,26 @@
 
 ## Features
 
-- **Meta-Transaction Relaying**: Execute signed delegate actions on behalf of users.
-- **Gas Pool Management**: Deposit NEAR to fund transactions, with excess offloaded to a recipient.
-- **Account Sponsoring**: Create new NEAR accounts with a predefined amount.
-- **Chain Abstraction**: Relay signature requests to a target chain’s MPC contract (e.g., for cross-chain operations).
-- **Admin Controls**: Manage authorized accounts and settings, restricted to admins.
-- **Event Logging**: Emit NEP-297 events for key actions (e.g., adding/removing auth accounts).
+- **Meta-Transaction Relaying**: Execute signed delegate actions on behalf of users (single, batch, or chunked).
+- **Gas Pool Management**: Deposit NEAR to fund transactions, with excess offloaded to a recipient and refund callbacks.
+- **Account Sponsoring**: Create new NEAR accounts with a configurable sponsor amount.
+- **Chain Abstraction**: Relay signature requests to a target chain’s MPC contract for cross-chain operations.
+- **Admin Controls**: Manage authorized accounts, admins, gas limits, and chain mappings, restricted to admins.
+- **Event Logging**: Emit NEP-297 events for key actions (e.g., auth changes, gas updates, signature results).
 
 ## Chain Abstraction
 
-The contract supports a basic form of chain abstraction through the `ChainSignatureRequest` action, allowing users to request signatures from an MPC contract on a specified target chain. This is useful for cross-chain interactions where NEAR acts as a relay hub. The process:
+The contract supports chain abstraction via the `ChainSignatureRequest` action, allowing users to request signatures from an MPC contract on a specified chain. Key aspects:
 
-1. Users submit a `SignedDelegateAction` with a `ChainSignatureRequest` action.
-2. The contract forwards the request to the specified MPC contract (e.g., `mpc.target-chain.near`) with a payload, derivation path, and gas allocation.
-3. The MPC contract processes the signature, abstracting the target chain’s specifics from the user.
+1. Users submit a `SignedDelegateAction` with a `ChainSignatureRequest` containing `target_chain`, `derivation_path`, and `payload`.
+2. The contract maps the `target_chain` to an MPC contract (e.g., `mpc.near`) and forwards the request with 100 TGas.
+3. Results are logged via the `CrossChainSignatureResult` event.
 
 ### Example Use Case
 
 Request a signature for an Ethereum transaction:
-
-- Action: `ChainSignatureRequest { target_chain: "eth|mpc.eth.near", derivation_path: "m/44'/60'/0'/0/0", payload: [/* tx data */] }`
-- Relayed to: `mpc.eth.near` for signing.
+- Action: `ChainSignatureRequest { target_chain: "ethereum", derivation_path: "m/44'/60'/0'/0/0", payload: [/* tx data */] }`
+- Relayed to: `mpc.near` (default mapping) or a custom MPC contract.
 
 ## Prerequisites
 
@@ -81,13 +80,12 @@ Relaying a Meta-Transaction
 Basic transfer:
 bash
 
-near call your-account.near relay_meta_transaction '{"signed_delegate": {"delegate_action": {"sender_id": "user.near", "receiver_id": "target.near", "actions": [{"Transfer": {"deposit": "1000000000000000000000000"}}], "nonce": 1, "max_block_height": 1000}, "signature": "YOUR_SIGNATURE", "public_key": "ed25519:YOUR_PUBLIC_KEY", "session_nonce": 1}}' --accountId your-account.near
+near call your-account.near relay_meta_transaction '{"signed_delegate": {"delegate_action": {"sender_id": "user.near", "receiver_id": "target.near", "actions": [{"Transfer": {"deposit": "1000000000000000000000000"}}], "nonce": 1, "max_block_height": 1000}, "signature": "YOUR_SIGNATURE", "public_key": "ed25519:YOUR_PUBLIC_KEY", "session_nonce": 1, "scheme": "Ed25519"}}' --accountId your-account.near
 
 Relaying a Chain Signature Request
-Request a signature for a target chain:
 bash
 
-near call your-account.near relay_meta_transaction '{"signed_delegate": {"delegate_action": {"sender_id": "user.near", "receiver_id": "mpc.target-chain.near", "actions": [{"ChainSignatureRequest": {"target_chain": "eth|mpc.eth.near", "derivation_path": "m/44'/60'/0'/0/0", "payload": [1, 2, 3]}}], "nonce": 1, "max_block_height": 1000}, "signature": "YOUR_SIGNATURE", "public_key": "ed25519:YOUR_PUBLIC_KEY", "session_nonce": 1}}' --accountId your-account.near
+near call your-account.near relay_meta_transaction '{"signed_delegate": {"delegate_action": {"sender_id": "user.near", "receiver_id": "mpc.near", "actions": [{"ChainSignatureRequest": {"target_chain": "ethereum", "derivation_path": "m/44'/60'/0'/0/0", "payload": [1, 2, 3]}}], "nonce": 1, "max_block_height": 1000}, "signature": "YOUR_SIGNATURE", "public_key": "ed25519:YOUR_PUBLIC_KEY", "session_nonce": 1, "scheme": "Ed25519"}}' --accountId your-account.near
 
 Sponsoring an Account
 bash
@@ -100,21 +98,39 @@ bash
 
 near call your-account.near add_auth_account '{"auth_account": "newuser.near", "auth_public_key": "ed25519:NEW_PUBLIC_KEY"}' --accountId admin.near
 
+Set chunk size:
+bash
+
+near call your-account.near set_chunk_size '{"new_size": 10}' --accountId admin.near
+
+Add chain mapping:
+bash
+
+near call your-account.near add_chain_mpc_mapping '{"chain": "ethereum", "mpc_contract": "mpc.eth.near"}' --accountId admin.near
+
 Testing
 Run Tests:
 bash
 
 cargo test
 
-Test Coverage:
-Admin functions, gas pool, relaying, sponsoring, and view methods.
+Test Coverage
+Admin functions (auth accounts, admins, settings)
 
-Chain abstraction: Limited testing for ChainSignatureRequest (no signature verification yet).
+Gas pool management (deposits, refunds)
 
-Notes:
-Signature verification is not implemented; tests use dummy signatures.
+Relaying (single, batch, chunked; transfers, function calls, chain signatures)
 
-Add tests for ChainSignatureRequest with a mock MPC contract for full coverage.
+Sponsoring accounts
+
+View methods
+
+Error cases (unauthorized, insufficient gas, invalid inputs)
+
+Notes
+Tests use mock signatures; real signature verification requires integration with an MPC contract.
+
+Add tests for nonce/expiration validation and complex action combinations.
 
 Project Structure
 
@@ -138,11 +154,15 @@ min_gas_pool: 1 NEAR
 
 max_gas_pool: 500 NEAR
 
-Sponsor Amount: 0.1 NEAR
+Sponsor Amount: 0.1 NEAR (configurable)
 
-Max Gas per Action: 300 TGas
+Max Gas per Action: 290 TGas
 
-Chain Abstraction: Configurable via target_chain in ChainSignatureRequest.
+MPC Sign Gas: 100 TGas
+
+Chunk Size: 5 (default, configurable 1-100)
+
+Chain Mapping: Default "near" → "mpc.near", configurable
 
 Contributing
 Fork the repository.

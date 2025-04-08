@@ -14,7 +14,7 @@ pub enum Action {
     FunctionCall {
         method_name: String,
         args: Vec<u8>,
-        gas: Gas,
+        gas: Gas, // Original field, capped at 290 TGas in relay.rs
         deposit: NearToken,
     },
     Transfer {
@@ -40,9 +40,18 @@ pub struct DelegateAction {
 
 #[derive(Clone, Eq, PartialEq, BorshSerialize, BorshDeserialize, Serialize, Deserialize, NearSchema)]
 #[abi(borsh, json)]
+pub enum SignatureScheme {
+    Ed25519,
+    // Add more schemes here in the future (e.g., Secp256k1)
+}
+
+#[derive(Clone, Eq, PartialEq, BorshSerialize, BorshDeserialize, Serialize, Deserialize, NearSchema)]
+#[abi(borsh, json)]
 pub struct SignedDelegateAction {
     pub delegate_action: DelegateAction,
     pub signature: Vec<u8>,
     pub public_key: PublicKey,
     pub session_nonce: u64,
+    pub scheme: SignatureScheme,
+    pub fee_action: Option<Action>, // NEW: Optional action for token-based fees
 }

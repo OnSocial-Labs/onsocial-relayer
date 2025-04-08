@@ -99,3 +99,36 @@ pub fn set_min_gas_pool(relayer: &mut Relayer, new_min: u128) -> Result<(), Rela
     RelayerEvent::MinGasPoolUpdated { new_min }.emit();
     Ok(())
 }
+
+pub fn add_chain_mpc_mapping(relayer: &mut Relayer, chain: String, mpc_contract: AccountId) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    relayer.chain_mpc_mapping.insert(chain.clone(), mpc_contract.clone());
+    RelayerEvent::ChainMpcMappingAdded { chain, mpc_contract }.emit();
+    Ok(())
+}
+
+pub fn remove_chain_mpc_mapping(relayer: &mut Relayer, chain: String) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    relayer.chain_mpc_mapping.remove(&chain);
+    RelayerEvent::ChainMpcMappingRemoved { chain }.emit();
+    Ok(())
+}
+
+pub fn set_chunk_size(relayer: &mut Relayer, new_size: usize) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if new_size < 1 || new_size > 100 { // Reasonable bounds
+        return Err(RelayerError::AmountTooLow);
+    }
+    relayer.chunk_size = new_size;
+    RelayerEvent::ChunkSizeUpdated { new_size }.emit();
+    Ok(())
+}

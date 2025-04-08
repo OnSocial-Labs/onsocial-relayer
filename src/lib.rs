@@ -1,8 +1,9 @@
-use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env}; // Removed BorshDeserialize
+use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env};
 use near_sdk::json_types::U128;
 use crate::state::Relayer;
-use crate::types::SignedDelegateAction;
+use crate::types::{SignedDelegateAction};
 use crate::errors::RelayerError;
+use crate::events::RelayerEvent;
 
 mod types;
 mod errors;
@@ -111,6 +112,21 @@ impl OnSocialRelayer {
         admin::set_min_gas_pool(&mut self.relayer, new_min.0)
     }
 
+    #[handle_result]
+    pub fn add_chain_mpc_mapping(&mut self, chain: String, mpc_contract: AccountId) -> Result<(), RelayerError> {
+        admin::add_chain_mpc_mapping(&mut self.relayer, chain, mpc_contract)
+    }
+
+    #[handle_result]
+    pub fn remove_chain_mpc_mapping(&mut self, chain: String) -> Result<(), RelayerError> {
+        admin::remove_chain_mpc_mapping(&mut self.relayer, chain)
+    }
+
+    #[handle_result]
+    pub fn set_chunk_size(&mut self, new_size: usize) -> Result<(), RelayerError> {
+        admin::set_chunk_size(&mut self.relayer, new_size)
+    }
+
     pub fn get_gas_pool(&self) -> U128 {
         U128(self.relayer.gas_pool)
     }
@@ -121,6 +137,10 @@ impl OnSocialRelayer {
 
     pub fn get_sponsor_amount(&self) -> U128 {
         U128(self.relayer.sponsor_amount)
+    }
+
+    pub fn get_chunk_size(&self) -> usize {
+        self.relayer.chunk_size
     }
 
     #[private]
@@ -137,6 +157,16 @@ impl OnSocialRelayer {
             Promise::new(self.relayer.offload_recipient.clone())
                 .transfer(NearToken::from_yoctonear(excess));
         }
+    }
+
+    #[private]
+    pub fn handle_mpc_signature(&mut self, chain: String, request_id: u64, result: Vec<u8>) {
+        RelayerEvent::CrossChainSignatureResult { chain, request_id, result }.emit();
+    }
+
+    #[private]
+    pub fn handle_bridge_result(&mut self, sender_id: AccountId, action_type: String, result: Vec<u8>) {
+        RelayerEvent::BridgeResult { sender_id, action_type, result }.emit();
     }
 }
 

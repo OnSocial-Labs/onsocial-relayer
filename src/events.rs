@@ -21,4 +21,14 @@ pub enum RelayerEvent {
     MinGasPoolUpdated { new_min: u128 },
     #[event_version("1.0.0")]
     LowGasPool { remaining: u128 },
+    #[event_version("1.0.0")]
+    ChainMpcMappingAdded { chain: String, mpc_contract: AccountId },
+    #[event_version("1.0.0")]
+    ChainMpcMappingRemoved { chain: String },
+    #[event_version("1.0.0")]
+    ChunkSizeUpdated { new_size: usize },
+    #[event_version("1.0.0")]
+    CrossChainSignatureResult { chain: String, request_id: u64, result: Vec<u8> },
+    #[event_version("1.0.0")]
+    BridgeResult { sender_id: AccountId, action_type: String, result: Vec<u8> }, // NEW: For bridge outcomes
 }
