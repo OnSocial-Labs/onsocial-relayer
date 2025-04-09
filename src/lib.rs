@@ -1,4 +1,4 @@
-use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env};
+use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, Gas};
 use near_sdk::json_types::U128;
 use crate::state::Relayer;
 use crate::types::{SignedDelegateAction};
@@ -127,6 +127,26 @@ impl OnSocialRelayer {
         admin::set_chunk_size(&mut self.relayer, new_size)
     }
 
+    // Gas configuration methods with proper type conversion
+    #[handle_result]
+    pub fn set_max_gas(&mut self, new_max: U128) -> Result<(), RelayerError> {
+        let gas_value = new_max.0.try_into().map_err(|_| RelayerError::AmountTooLow)?;
+        admin::set_max_gas(&mut self.relayer, Gas::from_gas(gas_value))
+    }
+
+    #[handle_result]
+    pub fn set_mpc_sign_gas(&mut self, new_gas: U128) -> Result<(), RelayerError> {
+        let gas_value = new_gas.0.try_into().map_err(|_| RelayerError::AmountTooLow)?;
+        admin::set_mpc_sign_gas(&mut self.relayer, Gas::from_gas(gas_value))
+    }
+
+    #[handle_result]
+    pub fn set_callback_gas(&mut self, new_gas: U128) -> Result<(), RelayerError> {
+        let gas_value = new_gas.0.try_into().map_err(|_| RelayerError::AmountTooLow)?;
+        admin::set_callback_gas(&mut self.relayer, Gas::from_gas(gas_value))
+    }
+
+    // Getters with proper type conversion
     pub fn get_gas_pool(&self) -> U128 {
         U128(self.relayer.gas_pool)
     }
@@ -141,6 +161,18 @@ impl OnSocialRelayer {
 
     pub fn get_chunk_size(&self) -> usize {
         self.relayer.chunk_size
+    }
+
+    pub fn get_max_gas(&self) -> U128 {
+        U128(self.relayer.max_gas.as_gas() as u128)
+    }
+
+    pub fn get_mpc_sign_gas(&self) -> U128 {
+        U128(self.relayer.mpc_sign_gas.as_gas() as u128)
+    }
+
+    pub fn get_callback_gas(&self) -> U128 {
+        U128(self.relayer.callback_gas.as_gas() as u128)
     }
 
     #[private]

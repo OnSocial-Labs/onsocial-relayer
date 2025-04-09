@@ -1,5 +1,5 @@
 use near_sdk::env;
-use near_sdk::{AccountId, PublicKey};
+use near_sdk::{AccountId, PublicKey, Gas};
 use crate::state::Relayer;
 use crate::errors::RelayerError;
 use crate::events::RelayerEvent;
@@ -125,10 +125,50 @@ pub fn set_chunk_size(relayer: &mut Relayer, new_size: usize) -> Result<(), Rela
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_size < 1 || new_size > 100 { // Reasonable bounds
+    if new_size < 1 || new_size > 100 {
         return Err(RelayerError::AmountTooLow);
     }
     relayer.chunk_size = new_size;
     RelayerEvent::ChunkSizeUpdated { new_size }.emit();
+    Ok(())
+}
+
+// New gas configuration functions
+pub fn set_max_gas(relayer: &mut Relayer, new_max: Gas) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if new_max.as_tgas() < 50 { // Minimum 50 TGas
+        return Err(RelayerError::AmountTooLow);
+    }
+    relayer.max_gas = new_max;
+    RelayerEvent::MaxGasUpdated { new_max: new_max.as_tgas() }.emit();
+    Ok(())
+}
+
+pub fn set_mpc_sign_gas(relayer: &mut Relayer, new_gas: Gas) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if new_gas.as_tgas() < 20 { // Minimum 20 TGas
+        return Err(RelayerError::AmountTooLow);
+    }
+    relayer.mpc_sign_gas = new_gas;
+    RelayerEvent::MpcSignGasUpdated { new_gas: new_gas.as_tgas() }.emit();
+    Ok(())
+}
+
+pub fn set_callback_gas(relayer: &mut Relayer, new_gas: Gas) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if new_gas.as_tgas() < 5 { // Minimum 5 TGas
+        return Err(RelayerError::AmountTooLow);
+    }
+    relayer.callback_gas = new_gas;
+    RelayerEvent::CallbackGasUpdated { new_gas: new_gas.as_tgas() }.emit();
     Ok(())
 }

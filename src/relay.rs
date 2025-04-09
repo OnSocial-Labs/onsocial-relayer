@@ -1,4 +1,4 @@
-use near_sdk::{Promise, Allowance, NearToken, Gas, env, ext_contract, AccountId};
+use near_sdk::{Promise, Allowance, NearToken, env, ext_contract, AccountId};
 use near_sdk::borsh::{self, BorshSerialize, BorshDeserialize};
 use core::num::NonZeroU128;
 use crate::state::Relayer;
@@ -13,11 +13,8 @@ struct SignRequest {
     payload: Vec<u8>,
     path: String,
     key_version: u32,
-    request_id: u64, // Tracks MPC signature requests
+    request_id: u64,
 }
-
-const MAX_GAS: Gas = Gas::from_tgas(290); // 290 TGas cap per action
-const MPC_SIGN_GAS: Gas = Gas::from_tgas(100); // Gas for MPC sign call
 
 #[allow(dead_code)]
 #[ext_contract(ext_self)]
@@ -46,6 +43,10 @@ fn verify_signature(signed_delegate: &SignedDelegateAction) -> Result<(), Relaye
 }
 
 pub fn relay_meta_transaction(relayer: &mut Relayer, signed_delegate: SignedDelegateAction) -> Result<Promise, RelayerError> {
+    if signed_delegate.delegate_action.actions.len() > 1 {
+        return Err(RelayerError::InvalidNonce);
+    }
+
     let sender_id = &signed_delegate.delegate_action.sender_id;
     let auth_key = relayer.auth_accounts.get(sender_id).ok_or(RelayerError::Unauthorized)?;
     if *auth_key != signed_delegate.public_key {
@@ -54,8 +55,8 @@ pub fn relay_meta_transaction(relayer: &mut Relayer, signed_delegate: SignedDele
 
     verify_signature(&signed_delegate)?;
 
-    let max_gas_cost = 29_000_000_000_000_000_000_000_u128; // 0.029 NEAR per action
-    let mut total_gas_cost = max_gas_cost * signed_delegate.delegate_action.actions.len() as u128;
+    let max_gas_cost = 29_000_000_000_000_000_000_000_u128;
+    let mut total_gas_cost = max_gas_cost;
     if signed_delegate.fee_action.is_some() {
         total_gas_cost += max_gas_cost;
     }
@@ -67,46 +68,45 @@ pub fn relay_meta_transaction(relayer: &mut Relayer, signed_delegate: SignedDele
 
     let delegate = signed_delegate.delegate_action;
     let mut promise = Promise::new(delegate.sender_id.clone());
-    let request_id_base = env::block_timestamp();
+    let request_id = env::block_timestamp();
 
     if let Some(fee_action) = signed_delegate.fee_action {
         promise = promise.then(execute_action(relayer, &fee_action, &delegate.sender_id, "FeePayment", None)?);
         promise = promise.then(
             ext_self::ext(env::current_account_id())
-                .with_static_gas(Gas::from_tgas(5))
+                .with_static_gas(relayer.callback_gas)
                 .handle_bridge_result(delegate.sender_id.clone(), "FeePayment".to_string(), Vec::new())
         );
     }
 
-    for (i, action) in delegate.actions.iter().enumerate() {
-        let request_id = if matches!(action, Action::ChainSignatureRequest { .. }) {
-            Some(request_id_base + i as u64)
-        } else {
-            None
-        };
-        promise = promise.then(execute_action(relayer, action, &delegate.sender_id, action.type_name(), request_id)?);
-        
-        promise = match action {
-            Action::ChainSignatureRequest { target_chain, .. } => {
-                let target_chain = target_chain.clone();
-                promise.then(
-                    ext_self::ext(env::current_account_id())
-                        .with_static_gas(Gas::from_tgas(5))
-                        .handle_mpc_signature(target_chain, request_id.unwrap(), Vec::new())
-                )
-            }
-            _ => promise.then(
+    let action = delegate.actions.first().unwrap();
+    let request_id_opt = if matches!(action, Action::ChainSignatureRequest { .. }) {
+        Some(request_id)
+    } else {
+        None
+    };
+    promise = promise.then(execute_action(relayer, action, &delegate.sender_id, action.type_name(), request_id_opt)?);
+
+    promise = match action {
+        Action::ChainSignatureRequest { target_chain, .. } => {
+            let target_chain = target_chain.clone();
+            promise.then(
                 ext_self::ext(env::current_account_id())
-                    .with_static_gas(Gas::from_tgas(5))
-                    .handle_bridge_result(delegate.sender_id.clone(), action.type_name().to_string(), Vec::new())
-            ),
-        };
-    }
+                    .with_static_gas(relayer.callback_gas)
+                    .handle_mpc_signature(target_chain, request_id, Vec::new())
+            )
+        }
+        _ => promise.then(
+            ext_self::ext(env::current_account_id())
+                .with_static_gas(relayer.callback_gas)
+                .handle_bridge_result(delegate.sender_id.clone(), action.type_name().to_string(), Vec::new())
+        ),
+    };
 
     relayer.gas_pool -= total_gas_cost;
     Ok(promise.then(
         ext_self::ext(env::current_account_id())
-            .with_static_gas(Gas::from_tgas(5))
+            .with_static_gas(relayer.callback_gas)
             .refund_gas_callback(total_gas_cost)
     ))
 }
@@ -116,7 +116,7 @@ pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<Sign
         return Err(RelayerError::InvalidNonce);
     }
 
-    let max_gas_cost = 29_000_000_000_000_000_000_000_u128; // 0.029 NEAR per action
+    let max_gas_cost = 29_000_000_000_000_000_000_000_u128;
     let mut total_gas_cost = 0;
     for delegate in &signed_delegates {
         total_gas_cost += max_gas_cost * delegate.delegate_action.actions.len() as u128;
@@ -147,7 +147,7 @@ pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<Sign
             promise = promise.then(execute_action(relayer, &fee_action, sender_id, "FeePayment", None)?);
             promise = promise.then(
                 ext_self::ext(env::current_account_id())
-                    .with_static_gas(Gas::from_tgas(5))
+                    .with_static_gas(relayer.callback_gas)
                     .handle_bridge_result(sender_id.clone(), "FeePayment".to_string(), Vec::new())
             );
         }
@@ -166,13 +166,13 @@ pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<Sign
                     let target_chain = target_chain.clone();
                     promise.then(
                         ext_self::ext(env::current_account_id())
-                            .with_static_gas(Gas::from_tgas(5))
+                            .with_static_gas(relayer.callback_gas)
                             .handle_mpc_signature(target_chain, current_request_id.unwrap(), Vec::new())
                     )
                 }
                 _ => promise.then(
                     ext_self::ext(env::current_account_id())
-                        .with_static_gas(Gas::from_tgas(5))
+                        .with_static_gas(relayer.callback_gas)
                         .handle_bridge_result(sender_id.clone(), action.type_name().to_string(), Vec::new())
                 ),
             };
@@ -184,7 +184,7 @@ pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<Sign
     Ok(promises.into_iter().map(|p| {
         p.then(
             ext_self::ext(env::current_account_id())
-                .with_static_gas(Gas::from_tgas(5))
+                .with_static_gas(relayer.callback_gas)
                 .refund_gas_callback(total_gas_cost)
         )
     }).collect())
@@ -230,7 +230,7 @@ pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: 
                     promise = promise.then(execute_action(relayer, fee_action, sender_id, "FeePayment", None)?);
                     promise = promise.then(
                         ext_self::ext(env::current_account_id())
-                            .with_static_gas(Gas::from_tgas(5))
+                            .with_static_gas(relayer.callback_gas)
                             .handle_bridge_result(sender_id.clone(), "FeePayment".to_string(), Vec::new())
                     );
                 }
@@ -249,13 +249,13 @@ pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: 
                             let target_chain = target_chain.clone();
                             promise.then(
                                 ext_self::ext(env::current_account_id())
-                                    .with_static_gas(Gas::from_tgas(5))
+                                    .with_static_gas(relayer.callback_gas)
                                     .handle_mpc_signature(target_chain, current_request_id.unwrap(), Vec::new())
                             )
                         }
                         _ => promise.then(
                             ext_self::ext(env::current_account_id())
-                                .with_static_gas(Gas::from_tgas(5))
+                                .with_static_gas(relayer.callback_gas)
                                 .handle_bridge_result(sender_id.clone(), action.type_name().to_string(), Vec::new())
                         ),
                     };
@@ -270,7 +270,7 @@ pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: 
     Ok(all_promises.into_iter().map(|p| {
         p.then(
             ext_self::ext(env::current_account_id())
-                .with_static_gas(Gas::from_tgas(5))
+                .with_static_gas(relayer.callback_gas)
                 .refund_gas_callback(total_gas_cost)
         )
     }).collect())
@@ -287,7 +287,7 @@ fn execute_action(
     
     match action {
         Action::FunctionCall { method_name, args, gas, deposit } => {
-            let capped_gas = if *gas > MAX_GAS { MAX_GAS } else { *gas };
+            let capped_gas = if *gas > relayer.max_gas { relayer.max_gas } else { *gas };
             promise = promise.function_call(method_name.clone(), args.clone(), *deposit, capped_gas);
         }
         Action::Transfer { deposit } => {
@@ -312,7 +312,7 @@ fn execute_action(
             };
             let args = borsh::to_vec(&request).map_err(|_| RelayerError::InvalidAccountId)?;
             promise = Promise::new(mpc_contract)
-                .function_call("sign".to_string(), args, NearToken::from_yoctonear(1), MPC_SIGN_GAS);
+                .function_call("sign".to_string(), args, NearToken::from_yoctonear(1), relayer.mpc_sign_gas);
         }
     }
 
