@@ -3,6 +3,9 @@ use crate::state::Relayer;
 use crate::errors::RelayerError;
 
 pub fn deposit_gas_pool(relayer: &mut Relayer) -> Result<(), RelayerError> {
+    if relayer.paused {
+        return Err(RelayerError::ContractPaused);
+    }
     let deposit = env::attached_deposit().as_yoctonear();
     relayer.gas_pool += deposit;
 

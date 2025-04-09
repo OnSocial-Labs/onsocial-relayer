@@ -2,8 +2,7 @@
 mod tests {
     use near_sdk::{testing_env, test_utils::VMContextBuilder, AccountId, PublicKey, NearToken, Gas};
     use near_sdk::json_types::U128;
-    use crate::{OnSocialRelayer};
-    use crate::errors::RelayerError;
+    use crate::{OnSocialRelayer, RelayerError};
     use crate::types::{SignedDelegateAction, DelegateAction, Action, SignatureScheme};
     use near_crypto::{InMemorySigner, KeyType, Signature};
 
@@ -743,7 +742,6 @@ mod tests {
         assert_eq!(contract.get_chunk_size(), 5);
     }
 
-    // New tests for gas configuration
     #[test]
     fn test_initial_gas_values() {
         let (contract, _) = setup_contract();
@@ -772,7 +770,6 @@ mod tests {
     #[test]
     fn test_set_max_gas_unauthorized() {
         let (mut contract, mut context) = setup_contract();
-        // Set caller to a non-admin account
         context.predecessor_account_id(accounts(3));
         testing_env!(context.build());
         let new_max_gas = U128(200 * 1_000_000_000_000); // 200 TGas
@@ -817,13 +814,11 @@ mod tests {
     #[test]
     fn test_sponsor_account_with_custom_max_gas() {
         let (mut contract, mut context) = setup_contract();
-        // Deposit enough gas to cover sponsor amount
         context.attached_deposit(NearToken::from_near(10))
                .prepaid_gas(Gas::from_tgas(300));
         testing_env!(context.build());
         contract.deposit_gas_pool().unwrap();
 
-        // Set a custom max_gas (e.g., 200 TGas)
         let new_max_gas = U128(200 * 1_000_000_000_000); // 200 TGas
         contract.set_max_gas(new_max_gas).unwrap();
         assert_eq!(contract.get_max_gas().0, 200 * 1_000_000_000_000, "max_gas should be 200 TGas");
@@ -839,25 +834,21 @@ mod tests {
             initial_gas_pool - contract.relayer.sponsor_amount,
             "Gas pool should decrease by sponsor_amount"
         );
-        // Note: We can't fully test the Promise execution here, but max_gas is applied in sponsor.rs
     }
 
     #[test]
     fn test_relay_meta_transaction_respects_max_gas() {
         let (mut contract, mut context) = setup_contract();
-        // Deposit enough gas to cover relay costs
         context.attached_deposit(NearToken::from_near(10))
                .prepaid_gas(Gas::from_tgas(300));
         testing_env!(context.build());
         contract.deposit_gas_pool().unwrap();
 
-        // Set a lower max_gas (e.g., 100 TGas)
         let new_max_gas = U128(100 * 1_000_000_000_000); // 100 TGas
         contract.set_max_gas(new_max_gas).unwrap();
         assert_eq!(contract.get_max_gas().0, 100 * 1_000_000_000_000, "max_gas should be 100 TGas");
 
         let initial_gas_pool = contract.get_gas_pool().0;
-        // Create a delegate with a function call requesting more gas than max_gas
         let signed_delegate = create_signed_delegate(
             accounts(1),
             accounts(2),
@@ -876,7 +867,6 @@ mod tests {
             initial_gas_pool - 29_000_000_000_000_000_000_000,
             "Gas pool should decrease by fixed cost (0.029 NEAR)"
         );
-        // Note: We can't directly verify the capped gas in the Promise here, but relay.rs caps it
     }
 
     #[test]
@@ -887,7 +877,6 @@ mod tests {
         testing_env!(context.build());
         contract.deposit_gas_pool().unwrap();
 
-        // Set a custom mpc_sign_gas (e.g., 80 TGas)
         let new_mpc_sign_gas = U128(80 * 1_000_000_000_000); // 80 TGas
         contract.set_mpc_sign_gas(new_mpc_sign_gas).unwrap();
         assert_eq!(contract.get_mpc_sign_gas().0, 80 * 1_000_000_000_000, "mpc_sign_gas should be 80 TGas");
@@ -910,6 +899,45 @@ mod tests {
             initial_gas_pool - 29_000_000_000_000_000_000_000,
             "Gas pool should decrease by fixed cost (0.029 NEAR)"
         );
-        // Note: mpc_sign_gas is applied in the Promise in relay.rs
+    }
+
+    #[test]
+    fn test_pause_and_unpause() {
+        let (mut contract, mut context) = setup_contract();
+        
+        // Initially unpaused
+        assert_eq!(contract.is_paused(), false, "Contract should start unpaused");
+
+        // Pause as admin
+        let result = contract.pause();
+        assert!(result.is_ok(), "Pause should succeed for admin");
+        assert_eq!(contract.is_paused(), true, "Contract should be paused");
+
+        // Try to deposit while paused
+        context.attached_deposit(NearToken::from_near(5));
+        testing_env!(context.build());
+        let deposit_result = contract.deposit_gas_pool();
+        assert!(matches!(deposit_result, Err(RelayerError::ContractPaused)), "Deposit should fail when paused");
+
+        // Try to relay while paused
+        let signed_delegate = create_signed_delegate(
+            accounts(1),
+            accounts(2),
+            vec![Action::Transfer {
+                deposit: NearToken::from_near(1),
+            }],
+            None,
+        );
+        let relay_result = contract.relay_meta_transaction(signed_delegate);
+        assert!(matches!(relay_result, Err(RelayerError::ContractPaused)), "Relay should fail when paused");
+
+        // Unpause as admin
+        let unpause_result = contract.unpause();
+        assert!(unpause_result.is_ok(), "Unpause should succeed for admin");
+        assert_eq!(contract.is_paused(), false, "Contract should be unpaused");
+
+        // Deposit should now work
+        let deposit_result = contract.deposit_gas_pool();
+        assert!(deposit_result.is_ok(), "Deposit should succeed after unpause");
     }
 }

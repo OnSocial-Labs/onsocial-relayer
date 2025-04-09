@@ -127,7 +127,6 @@ impl OnSocialRelayer {
         admin::set_chunk_size(&mut self.relayer, new_size)
     }
 
-    // Gas configuration methods with proper type conversion
     #[handle_result]
     pub fn set_max_gas(&mut self, new_max: U128) -> Result<(), RelayerError> {
         let gas_value = new_max.0.try_into().map_err(|_| RelayerError::AmountTooLow)?;
@@ -146,7 +145,17 @@ impl OnSocialRelayer {
         admin::set_callback_gas(&mut self.relayer, Gas::from_gas(gas_value))
     }
 
-    // Getters with proper type conversion
+    // New pause/unpause methods
+    #[handle_result]
+    pub fn pause(&mut self) -> Result<(), RelayerError> {
+        admin::pause(&mut self.relayer)
+    }
+
+    #[handle_result]
+    pub fn unpause(&mut self) -> Result<(), RelayerError> {
+        admin::unpause(&mut self.relayer)
+    }
+
     pub fn get_gas_pool(&self) -> U128 {
         U128(self.relayer.gas_pool)
     }
@@ -173,6 +182,11 @@ impl OnSocialRelayer {
 
     pub fn get_callback_gas(&self) -> U128 {
         U128(self.relayer.callback_gas.as_gas() as u128)
+    }
+
+    // New getter for paused state
+    pub fn is_paused(&self) -> bool {
+        self.relayer.paused
     }
 
     #[private]

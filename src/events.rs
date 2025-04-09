@@ -31,11 +31,15 @@ pub enum RelayerEvent {
     CrossChainSignatureResult { chain: String, request_id: u64, result: Vec<u8> },
     #[event_version("1.0.0")]
     BridgeResult { sender_id: AccountId, action_type: String, result: Vec<u8> },
-    // New gas-related events
     #[event_version("1.0.0")]
     MaxGasUpdated { new_max: u64 },
     #[event_version("1.0.0")]
     MpcSignGasUpdated { new_gas: u64 },
     #[event_version("1.0.0")]
     CallbackGasUpdated { new_gas: u64 },
+    // New events for pause/unpause
+    #[event_version("1.0.0")]
+    ContractPaused,
+    #[event_version("1.0.0")]
+    ContractUnpaused,
 }

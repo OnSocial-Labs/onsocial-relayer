@@ -43,6 +43,9 @@ fn verify_signature(signed_delegate: &SignedDelegateAction) -> Result<(), Relaye
 }
 
 pub fn relay_meta_transaction(relayer: &mut Relayer, signed_delegate: SignedDelegateAction) -> Result<Promise, RelayerError> {
+    if relayer.paused {
+        return Err(RelayerError::ContractPaused);
+    }
     if signed_delegate.delegate_action.actions.len() > 1 {
         return Err(RelayerError::InvalidNonce);
     }
@@ -112,6 +115,9 @@ pub fn relay_meta_transaction(relayer: &mut Relayer, signed_delegate: SignedDele
 }
 
 pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<SignedDelegateAction>) -> Result<Vec<Promise>, RelayerError> {
+    if relayer.paused {
+        return Err(RelayerError::ContractPaused);
+    }
     if signed_delegates.is_empty() || signed_delegates.len() > relayer.chunk_size {
         return Err(RelayerError::InvalidNonce);
     }
@@ -191,6 +197,9 @@ pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<Sign
 }
 
 pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<SignedDelegateAction>) -> Result<Vec<Promise>, RelayerError> {
+    if relayer.paused {
+        return Err(RelayerError::ContractPaused);
+    }
     if signed_delegates.is_empty() {
         return Err(RelayerError::InvalidNonce);
     }

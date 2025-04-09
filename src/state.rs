@@ -19,10 +19,10 @@ pub struct Relayer {
     pub auth_accounts: LookupMap<AccountId, PublicKey>,
     pub chain_mpc_mapping: LookupMap<String, AccountId>,
     pub chunk_size: usize,
-    // New configurable gas fields
-    pub max_gas: Gas,        // Maximum gas per action
-    pub mpc_sign_gas: Gas,   // Gas for MPC signature calls
-    pub callback_gas: Gas,   // Gas for callbacks
+    pub max_gas: Gas,
+    pub mpc_sign_gas: Gas,
+    pub callback_gas: Gas,
+    pub paused: bool, // New field for pausing
 }
 
 impl Relayer {
@@ -41,9 +41,10 @@ impl Relayer {
             auth_accounts,
             chain_mpc_mapping,
             chunk_size: 5,
-            max_gas: Gas::from_tgas(250),      // Default 250 TGas
-            mpc_sign_gas: Gas::from_tgas(100), // Default 100 TGas
-            callback_gas: Gas::from_tgas(10),  // Default 10 TGas
+            max_gas: Gas::from_tgas(250),
+            mpc_sign_gas: Gas::from_tgas(100),
+            callback_gas: Gas::from_tgas(10),
+            paused: false, // Initially unpaused
         }
     }
 

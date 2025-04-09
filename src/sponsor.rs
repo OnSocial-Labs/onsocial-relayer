@@ -5,6 +5,9 @@ use crate::errors::RelayerError;
 use crate::relay::ext_self;
 
 pub fn sponsor_account(relayer: &mut Relayer, account_name: String, public_key: PublicKey) -> Result<Promise, RelayerError> {
+    if relayer.paused {
+        return Err(RelayerError::ContractPaused);
+    }
     if relayer.gas_pool < relayer.min_gas_pool + relayer.sponsor_amount {
         return Err(RelayerError::InsufficientGasPool);
     }
@@ -19,7 +22,7 @@ pub fn sponsor_account(relayer: &mut Relayer, account_name: String, public_key: 
             "create_account".to_string(),
             serde_json::to_vec(&json!({"new_account_id": new_account_id, "new_public_key": public_key})).unwrap(),
             NearToken::from_yoctonear(relayer.sponsor_amount),
-            relayer.max_gas, // Use configurable max_gas
+            relayer.max_gas,
         );
 
     Ok(promise.then(

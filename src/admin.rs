@@ -133,13 +133,12 @@ pub fn set_chunk_size(relayer: &mut Relayer, new_size: usize) -> Result<(), Rela
     Ok(())
 }
 
-// New gas configuration functions
 pub fn set_max_gas(relayer: &mut Relayer, new_max: Gas) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_max.as_tgas() < 50 { // Minimum 50 TGas
+    if new_max.as_tgas() < 50 {
         return Err(RelayerError::AmountTooLow);
     }
     relayer.max_gas = new_max;
@@ -152,7 +151,7 @@ pub fn set_mpc_sign_gas(relayer: &mut Relayer, new_gas: Gas) -> Result<(), Relay
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_gas.as_tgas() < 20 { // Minimum 20 TGas
+    if new_gas.as_tgas() < 20 {
         return Err(RelayerError::AmountTooLow);
     }
     relayer.mpc_sign_gas = new_gas;
@@ -165,10 +164,37 @@ pub fn set_callback_gas(relayer: &mut Relayer, new_gas: Gas) -> Result<(), Relay
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_gas.as_tgas() < 5 { // Minimum 5 TGas
+    if new_gas.as_tgas() < 5 {
         return Err(RelayerError::AmountTooLow);
     }
     relayer.callback_gas = new_gas;
     RelayerEvent::CallbackGasUpdated { new_gas: new_gas.as_tgas() }.emit();
+    Ok(())
+}
+
+// New pause/unpause functions
+pub fn pause(relayer: &mut Relayer) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if relayer.paused {
+        return Ok(()); // Already paused, no-op
+    }
+    relayer.paused = true;
+    RelayerEvent::ContractPaused.emit();
+    Ok(())
+}
+
+pub fn unpause(relayer: &mut Relayer) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if !relayer.paused {
+        return Ok(()); // Already unpaused, no-op
+    }
+    relayer.paused = false;
+    RelayerEvent::ContractUnpaused.emit();
     Ok(())
 }
