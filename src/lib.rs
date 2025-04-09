@@ -1,6 +1,6 @@
 use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, Gas};
 use near_sdk::json_types::U128;
-use crate::state::Relayer;
+use crate::state::{Relayer, RelayerV1};
 use crate::types::{SignedDelegateAction};
 use crate::errors::RelayerError;
 use crate::events::RelayerEvent;
@@ -145,7 +145,6 @@ impl OnSocialRelayer {
         admin::set_callback_gas(&mut self.relayer, Gas::from_gas(gas_value))
     }
 
-    // New pause/unpause methods
     #[handle_result]
     pub fn pause(&mut self) -> Result<(), RelayerError> {
         admin::pause(&mut self.relayer)
@@ -154,6 +153,11 @@ impl OnSocialRelayer {
     #[handle_result]
     pub fn unpause(&mut self) -> Result<(), RelayerError> {
         admin::unpause(&mut self.relayer)
+    }
+
+    #[handle_result]
+    pub fn migrate(&mut self) -> Result<(), RelayerError> {
+        admin::migrate(&mut self.relayer)
     }
 
     pub fn get_gas_pool(&self) -> U128 {
@@ -184,9 +188,12 @@ impl OnSocialRelayer {
         U128(self.relayer.callback_gas.as_gas() as u128)
     }
 
-    // New getter for paused state
     pub fn is_paused(&self) -> bool {
         self.relayer.paused
+    }
+
+    pub fn get_version(&self) -> String { // Changed to return String
+        self.relayer.version.clone()
     }
 
     #[private]
@@ -213,6 +220,15 @@ impl OnSocialRelayer {
     #[private]
     pub fn handle_bridge_result(&mut self, sender_id: AccountId, action_type: String, result: Vec<u8>) {
         RelayerEvent::BridgeResult { sender_id, action_type, result }.emit();
+    }
+
+    #[init]
+    #[private]
+    pub fn migrate_state() -> Self {
+        let old_state: RelayerV1 = env::state_read().expect("Failed to read old state");
+        Self {
+            relayer: Relayer::from(old_state),
+        }
     }
 }
 

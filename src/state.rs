@@ -8,7 +8,7 @@ pub enum StorageKey {
     ChainMpcMapping,
 }
 
-#[near]
+#[near(serializers=[borsh])]
 pub struct Relayer {
     pub gas_pool: u128,
     pub min_gas_pool: u128,
@@ -22,7 +22,8 @@ pub struct Relayer {
     pub max_gas: Gas,
     pub mpc_sign_gas: Gas,
     pub callback_gas: Gas,
-    pub paused: bool, // New field for pausing
+    pub paused: bool,
+    pub version: String, // Changed to String
 }
 
 impl Relayer {
@@ -44,11 +45,50 @@ impl Relayer {
             max_gas: Gas::from_tgas(250),
             mpc_sign_gas: Gas::from_tgas(100),
             callback_gas: Gas::from_tgas(10),
-            paused: false, // Initially unpaused
+            paused: false,
+            version: "1.0".to_string(), // Initial version 1.0
         }
     }
 
     pub fn is_admin(&self, caller: &AccountId) -> bool {
         self.admins.contains(caller)
+    }
+}
+
+#[near(serializers=[borsh])]
+pub struct RelayerV1 {
+    pub gas_pool: u128,
+    pub min_gas_pool: u128,
+    pub max_gas_pool: u128,
+    pub sponsor_amount: u128,
+    pub offload_recipient: AccountId,
+    pub admins: Vec<AccountId>,
+    pub auth_accounts: LookupMap<AccountId, PublicKey>,
+    pub chain_mpc_mapping: LookupMap<String, AccountId>,
+    pub chunk_size: usize,
+    pub max_gas: Gas,
+    pub mpc_sign_gas: Gas,
+    pub callback_gas: Gas,
+    pub paused: bool,
+}
+
+impl From<RelayerV1> for Relayer {
+    fn from(old: RelayerV1) -> Self {
+        Self {
+            gas_pool: old.gas_pool,
+            min_gas_pool: old.min_gas_pool,
+            max_gas_pool: old.max_gas_pool,
+            sponsor_amount: old.sponsor_amount,
+            offload_recipient: old.offload_recipient,
+            admins: old.admins,
+            auth_accounts: old.auth_accounts,
+            chain_mpc_mapping: old.chain_mpc_mapping,
+            chunk_size: old.chunk_size,
+            max_gas: old.max_gas,
+            mpc_sign_gas: old.mpc_sign_gas,
+            callback_gas: old.callback_gas,
+            paused: old.paused,
+            version: "1.1".to_string(), // Upgraded to 1.1
+        }
     }
 }

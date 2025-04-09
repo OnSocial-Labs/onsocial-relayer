@@ -71,6 +71,7 @@ mod tests {
             contract.relayer.chain_mpc_mapping.get(&"near".to_string()),
             Some(&"mpc.near".parse().unwrap())
         );
+        assert_eq!(contract.get_version(), "1.0", "Initial version should be 1.0");
     }
 
     #[test]
@@ -740,6 +741,7 @@ mod tests {
             100_000_000_000_000_000_000_000
         );
         assert_eq!(contract.get_chunk_size(), 5);
+        assert_eq!(contract.get_version(), "1.0", "Version should be 1.0");
     }
 
     #[test]
@@ -905,21 +907,17 @@ mod tests {
     fn test_pause_and_unpause() {
         let (mut contract, mut context) = setup_contract();
         
-        // Initially unpaused
         assert_eq!(contract.is_paused(), false, "Contract should start unpaused");
 
-        // Pause as admin
         let result = contract.pause();
         assert!(result.is_ok(), "Pause should succeed for admin");
         assert_eq!(contract.is_paused(), true, "Contract should be paused");
 
-        // Try to deposit while paused
         context.attached_deposit(NearToken::from_near(5));
         testing_env!(context.build());
         let deposit_result = contract.deposit_gas_pool();
         assert!(matches!(deposit_result, Err(RelayerError::ContractPaused)), "Deposit should fail when paused");
 
-        // Try to relay while paused
         let signed_delegate = create_signed_delegate(
             accounts(1),
             accounts(2),
@@ -931,13 +929,145 @@ mod tests {
         let relay_result = contract.relay_meta_transaction(signed_delegate);
         assert!(matches!(relay_result, Err(RelayerError::ContractPaused)), "Relay should fail when paused");
 
-        // Unpause as admin
         let unpause_result = contract.unpause();
         assert!(unpause_result.is_ok(), "Unpause should succeed for admin");
         assert_eq!(contract.is_paused(), false, "Contract should be unpaused");
 
-        // Deposit should now work
         let deposit_result = contract.deposit_gas_pool();
         assert!(deposit_result.is_ok(), "Deposit should succeed after unpause");
+    }
+
+    #[test]
+    fn test_pause_unauthorized() {
+        let (mut contract, mut context) = setup_contract();
+        context.predecessor_account_id(accounts(3)); // Non-admin
+        testing_env!(context.build());
+        let result = contract.pause();
+        assert!(matches!(result, Err(RelayerError::Unauthorized)), "Non-admin should not be able to pause");
+        assert_eq!(contract.is_paused(), false, "Contract should remain unpaused");
+    }
+
+    #[test]
+    fn test_unpause_unauthorized() {
+        let (mut contract, mut context) = setup_contract();
+        contract.pause().unwrap(); // Pause as admin first
+        context.predecessor_account_id(accounts(3)); // Non-admin
+        testing_env!(context.build());
+        let result = contract.unpause();
+        assert!(matches!(result, Err(RelayerError::Unauthorized)), "Non-admin should not be able to unpause");
+        assert_eq!(contract.is_paused(), true, "Contract should remain paused");
+    }
+
+    #[test]
+    fn test_pause_already_paused() {
+        let (mut contract, _) = setup_contract();
+        contract.pause().unwrap();
+        let result = contract.pause();
+        assert!(result.is_ok(), "Pausing an already paused contract should be a no-op");
+        assert_eq!(contract.is_paused(), true, "Contract should still be paused");
+    }
+
+    #[test]
+    fn test_unpause_already_unpaused() {
+        let (mut contract, _) = setup_contract();
+        let result = contract.unpause();
+        assert!(result.is_ok(), "Unpausing an already unpaused contract should be a no-op");
+        assert_eq!(contract.is_paused(), false, "Contract should still be unpaused");
+    }
+
+    #[test]
+    fn test_migrate_success() {
+        let (mut contract, _) = setup_contract();
+        assert_eq!(contract.get_version(), "1.0", "Initial version should be 1.0");
+        
+        contract.pause().unwrap();
+        
+        let result = contract.migrate();
+        assert!(result.is_ok(), "Migration should succeed: {:?}", result.err());
+        assert_eq!(contract.get_version(), "1.1", "Version should be updated to 1.1");
+    }
+
+    #[test]
+    fn test_migrate_unauthorized() {
+        let (mut contract, mut context) = setup_contract();
+        context.predecessor_account_id(accounts(3)); // Non-admin
+        testing_env!(context.build());
+        let result = contract.migrate();
+        assert!(matches!(result, Err(RelayerError::Unauthorized)), "Non-admin should not be able to migrate");
+        assert_eq!(contract.get_version(), "1.0", "Version should remain 1.0");
+    }
+
+    #[test]
+    fn test_migrate_not_paused() {
+        let (mut contract, _) = setup_contract();
+        let result = contract.migrate();
+        assert!(matches!(result, Err(RelayerError::ContractPaused)), "Migration should fail if not paused");
+        assert_eq!(contract.get_version(), "1.0", "Version should remain 1.0");
+    }
+
+    #[test]
+    fn test_migrate_already_latest_version() {
+        let (mut contract, _) = setup_contract();
+        contract.pause().unwrap();
+        contract.migrate().unwrap(); // First migration to 1.1
+        let result = contract.migrate();
+        assert!(result.is_ok(), "Migrating at latest version should be a no-op: {:?}", result.err());
+        assert_eq!(contract.get_version(), "1.1", "Version should still be 1.1");
+    }
+
+    #[test]
+    fn test_view_methods_after_migration() {
+        let (mut contract, mut context) = setup_contract();
+        context.attached_deposit(NearToken::from_near(5));
+        testing_env!(context.build());
+        contract.deposit_gas_pool().unwrap();
+        
+        contract.pause().unwrap();
+        contract.migrate().unwrap();
+        
+        assert_eq!(contract.get_version(), "1.1", "Version should be 1.1 after migration");
+        assert_eq!(
+            contract.get_gas_pool().0,
+            5_000_000_000_000_000_000_000_000,
+            "Gas pool should remain unchanged"
+        );
+        assert_eq!(
+            contract.get_min_gas_pool().0,
+            1_000_000_000_000_000_000_000_000,
+            "Min gas pool should remain unchanged"
+        );
+        assert_eq!(
+            contract.get_sponsor_amount().0,
+            100_000_000_000_000_000_000_000,
+            "Sponsor amount should remain unchanged"
+        );
+        assert_eq!(contract.get_chunk_size(), 5, "Chunk size should remain unchanged");
+    }
+
+    #[test]
+    fn test_set_max_gas_boundary() {
+        let (mut contract, _) = setup_contract();
+        let boundary_max_gas = U128(50 * 1_000_000_000_000); // 50 TGas, minimum allowed
+        let result = contract.set_max_gas(boundary_max_gas);
+        assert!(result.is_ok(), "Setting max_gas to minimum (50 TGas) should succeed");
+        assert_eq!(contract.get_max_gas().0, 50 * 1_000_000_000_000, "max_gas should be 50 TGas");
+    }
+
+    #[test]
+    fn test_set_mpc_sign_gas_boundary() {
+        let (mut contract, _) = setup_contract();
+        let boundary_mpc_sign_gas = U128(20 * 1_000_000_000_000); // 20 TGas, minimum allowed
+        let result = contract.set_mpc_sign_gas(boundary_mpc_sign_gas);
+        assert!(result.is_ok(), "Setting mpc_sign_gas to minimum (20 TGas) should succeed");
+        assert_eq!(contract.get_mpc_sign_gas().0, 20 * 1_000_000_000_000, "mpc_sign_gas should be 20 TGas");
+    }
+
+    #[test]
+    fn test_set_callback_gas_boundary() {
+        let (mut contract, _) = setup_contract();
+        let boundary_callback_gas = U128(5 * 1_000_000_000_000); // 5 TGas, minimum allowed
+        let result = contract.set_callback_gas(boundary_callback_gas);
+        assert!(result.is_ok(), "Setting callback_gas to minimum (5 TGas) should succeed");
+        assert_eq!(contract.get_callback_gas().0, 5 * 1_000_000_000_000, "callback_gas should be 5 TGas");
     }
 }

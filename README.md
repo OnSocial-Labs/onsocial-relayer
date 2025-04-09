@@ -11,13 +11,14 @@
 - **Admin Controls**: Manage authorized accounts, admins, gas limits, chain mappings, and contract pausing, restricted to admins.
 - **Pause/Unpause**: Temporarily halt contract operations (e.g., deposits, relaying, sponsoring) with admin control.
 - **Event Logging**: Emit NEP-297 events for key actions (e.g., auth changes, gas updates, signature results, pause/unpause).
+- **Migration Support**: Upgrade contract state (e.g., from v1.0 to v1.1) while paused.
 
 ## Chain Abstraction
 
 The contract supports chain abstraction via the `ChainSignatureRequest` action, allowing users to request signatures from an MPC contract on a specified chain. Key aspects:
 
 1. Users submit a `SignedDelegateAction` with a `ChainSignatureRequest` containing `target_chain`, `derivation_path`, and `payload`.
-2. The contract maps the `target_chain` to an MPC contract (e.g., `mpc.near`) and forwards the request with configurable gas (default 100 TGas).
+2. The contract maps the `target_chain` to an MPC contract (e.g., `mpc.near`) and forwards the request with configurable gas (`mpc_sign_gas`, default 100 TGas).
 3. Results are logged via the `CrossChainSignatureResult` event.
 
 ### Example Use Case
@@ -119,6 +120,16 @@ bash
 
 near call your-account.near unpause --accountId admin.near
 
+Set max gas (e.g., 200 TGas):
+bash
+
+near call your-account.near set_max_gas '{"new_max": "200000000000000"}' --accountId admin.near
+
+Migrate contract state (when paused):
+bash
+
+near call your-account.near migrate --accountId admin.near
+
 Testing
 Run Tests:
 bash
@@ -126,7 +137,7 @@ bash
 cargo test
 
 Test Coverage
-Admin functions (auth accounts, admins, settings, pause/unpause)
+Admin functions (auth accounts, admins, settings, pause/unpause, migration)
 
 Gas pool management (deposits, refunds, limits)
 
@@ -153,13 +164,13 @@ onsocialrelayer/
 ├── Cargo.toml          # Dependencies and build config
 ├── src/
 │   ├── lib.rs          # Main contract entry point
-│   ├── admin.rs        # Admin functions (incl. pause/unpause)
+│   ├── admin.rs        # Admin functions (incl. pause/unpause, migration)
 │   ├── errors.rs       # Custom error types
 │   ├── events.rs       # NEP-297 event definitions
 │   ├── gas_pool.rs     # Gas pool management
 │   ├── relay.rs        # Meta-transaction relaying (includes chain abstraction)
 │   ├── sponsor.rs      # Account sponsoring logic
-│   ├── state.rs        # Contract state definition
+│   ├── state.rs        # Contract state definition (includes versioning)
 │   ├── types.rs        # Data structures (includes ChainSignatureRequest)
 │   └── tests/          # Unit tests
 
@@ -183,6 +194,8 @@ Chunk Size: 5 (default, configurable 1-100)
 Chain Mapping: Default "near" → "mpc.near", configurable
 
 Paused State: Initially unpaused, toggleable by admins
+
+Version: Starts at "1.0", migratable to "1.1" (adds versioning support)
 
 Contributing
 Fork the repository.

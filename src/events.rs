@@ -37,9 +37,10 @@ pub enum RelayerEvent {
     MpcSignGasUpdated { new_gas: u64 },
     #[event_version("1.0.0")]
     CallbackGasUpdated { new_gas: u64 },
-    // New events for pause/unpause
     #[event_version("1.0.0")]
     ContractPaused,
     #[event_version("1.0.0")]
     ContractUnpaused,
+    #[event_version("1.0.0")]
+    MigrationCompleted { from_version: String, to_version: String }, // Changed to String
 }

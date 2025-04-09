@@ -172,7 +172,6 @@ pub fn set_callback_gas(relayer: &mut Relayer, new_gas: Gas) -> Result<(), Relay
     Ok(())
 }
 
-// New pause/unpause functions
 pub fn pause(relayer: &mut Relayer) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
@@ -197,4 +196,27 @@ pub fn unpause(relayer: &mut Relayer) -> Result<(), RelayerError> {
     relayer.paused = false;
     RelayerEvent::ContractUnpaused.emit();
     Ok(())
+}
+
+pub fn migrate(relayer: &mut Relayer) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if !relayer.paused {
+        return Err(RelayerError::ContractPaused); // Must be paused to migrate
+    }
+
+    match relayer.version.as_str() {
+        "1.0" => {
+            relayer.version = "1.1".to_string();
+            RelayerEvent::MigrationCompleted { 
+                from_version: "1.0".to_string(), 
+                to_version: "1.1".to_string() 
+            }.emit();
+            Ok(())
+        }
+        "1.1" => Ok(()), // Already at latest version, no-op
+        _ => Err(RelayerError::InvalidNonce), // Unknown version
+    }
 }
