@@ -178,7 +178,7 @@ pub fn pause(relayer: &mut Relayer) -> Result<(), RelayerError> {
         return Err(RelayerError::Unauthorized);
     }
     if relayer.paused {
-        return Ok(()); // Already paused, no-op
+        return Ok(());
     }
     relayer.paused = true;
     RelayerEvent::ContractPaused.emit();
@@ -191,7 +191,7 @@ pub fn unpause(relayer: &mut Relayer) -> Result<(), RelayerError> {
         return Err(RelayerError::Unauthorized);
     }
     if !relayer.paused {
-        return Ok(()); // Already unpaused, no-op
+        return Ok(());
     }
     relayer.paused = false;
     RelayerEvent::ContractUnpaused.emit();
@@ -204,7 +204,7 @@ pub fn migrate(relayer: &mut Relayer) -> Result<(), RelayerError> {
         return Err(RelayerError::Unauthorized);
     }
     if !relayer.paused {
-        return Err(RelayerError::ContractPaused); // Must be paused to migrate
+        return Err(RelayerError::ContractPaused);
     }
 
     match relayer.version.as_str() {
@@ -216,7 +216,7 @@ pub fn migrate(relayer: &mut Relayer) -> Result<(), RelayerError> {
             }.emit();
             Ok(())
         }
-        "1.1" => Ok(()), // Already at latest version, no-op
-        _ => Err(RelayerError::InvalidNonce), // Unknown version
+        "1.1" => Ok(()),
+        _ => Err(RelayerError::InvalidNonce),
     }
 }

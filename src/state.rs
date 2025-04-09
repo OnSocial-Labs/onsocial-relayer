@@ -23,7 +23,7 @@ pub struct Relayer {
     pub mpc_sign_gas: Gas,
     pub callback_gas: Gas,
     pub paused: bool,
-    pub version: String, // Changed to String
+    pub version: String,
 }
 
 impl Relayer {
@@ -46,7 +46,7 @@ impl Relayer {
             mpc_sign_gas: Gas::from_tgas(100),
             callback_gas: Gas::from_tgas(10),
             paused: false,
-            version: "1.0".to_string(), // Initial version 1.0
+            version: "1.0".to_string(),
         }
     }
 
@@ -88,7 +88,7 @@ impl From<RelayerV1> for Relayer {
             mpc_sign_gas: old.mpc_sign_gas,
             callback_gas: old.callback_gas,
             paused: old.paused,
-            version: "1.1".to_string(), // Upgraded to 1.1
+            version: "1.1".to_string(),
         }
     }
 }

@@ -1,7 +1,7 @@
 use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, Gas};
 use near_sdk::json_types::U128;
 use crate::state::{Relayer, RelayerV1};
-use crate::types::{SignedDelegateAction};
+use crate::types::SignedDelegateAction;
 use crate::errors::RelayerError;
 use crate::events::RelayerEvent;
 
@@ -68,8 +68,13 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
-    pub fn sponsor_account(&mut self, account_name: String, public_key: PublicKey) -> Result<Promise, RelayerError> {
-        sponsor::sponsor_account(&mut self.relayer, account_name, public_key)
+    pub fn sponsor_account(&mut self, new_account_id: AccountId, system_account: AccountId, public_key: PublicKey) -> Result<Promise, RelayerError> {
+        sponsor::sponsor_account(&mut self.relayer, new_account_id, system_account, public_key)
+    }
+
+    #[handle_result]
+    pub fn sponsor_account_signed(&mut self, #[serializer(borsh)] signed_delegate: SignedDelegateAction) -> Result<Promise, RelayerError> {
+        sponsor::sponsor_account_signed(&mut self.relayer, signed_delegate)
     }
 
     #[handle_result]
@@ -192,7 +197,7 @@ impl OnSocialRelayer {
         self.relayer.paused
     }
 
-    pub fn get_version(&self) -> String { // Changed to return String
+    pub fn get_version(&self) -> String {
         self.relayer.version.clone()
     }
 

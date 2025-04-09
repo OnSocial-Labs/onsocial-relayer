@@ -9,16 +9,16 @@ mod tests {
     fn setup_contract() -> (OnSocialRelayer, VMContextBuilder) {
         let mut context = VMContextBuilder::new();
         context
-            .predecessor_account_id(accounts(0))
+            .predecessor_account_id(accounts(0)) // Admin
             .attached_deposit(NearToken::from_near(0));
         testing_env!(context.build());
         let signer = InMemorySigner::from_seed(accounts(1), KeyType::ED25519, "test-seed");
         let public_key = PublicKey::try_from(borsh::to_vec(&signer.public_key()).unwrap()).unwrap();
         let contract = OnSocialRelayer::new(
-            vec![accounts(0)],
-            accounts(1),
+            vec![accounts(0)], // admins
+            accounts(1),       // initial_auth_account
             public_key,
-            accounts(2),
+            accounts(2),       // offload_recipient
         );
         (contract, context)
     }
@@ -604,8 +604,9 @@ mod tests {
     fn test_sponsor_account() {
         let (mut contract, mut context) = setup_contract();
         context
+            .predecessor_account_id(accounts(1)) // Auth account
             .attached_deposit(NearToken::from_near(10))
-            .prepaid_gas(Gas::from_tgas(300)); // Explicit 300 TGas limit
+            .prepaid_gas(Gas::from_tgas(300));
         testing_env!(context.build());
     
         contract.deposit_gas_pool().unwrap();
@@ -614,7 +615,11 @@ mod tests {
         let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
             .parse()
             .unwrap();
-        let result = contract.sponsor_account("testuser1".to_string(), public_key);
+        let result = contract.sponsor_account(
+            "testuser1.testnet".parse().unwrap(),
+            "testnet".parse().unwrap(), // system_account
+            public_key,
+        );
     
         assert!(result.is_ok(), "Expected sponsor_account to succeed, got {:?}", result.err());
         assert_eq!(
@@ -622,20 +627,40 @@ mod tests {
             initial_gas_pool - contract.relayer.sponsor_amount,
             "Gas pool should decrease by sponsor_amount"
         );
-        // Note: Full account creation and refund callback can't be tested in unit tests.
-        // Verify on testnet for end-to-end behavior.
     }
 
     #[test]
     fn test_sponsor_account_insufficient_gas() {
-        let (mut contract, _) = setup_contract();
+        let (mut contract, mut context) = setup_contract();
+        context.predecessor_account_id(accounts(1)); // Auth account
+        testing_env!(context.build());
         let result = contract.sponsor_account(
-            "testuser".to_string(),
+            "testuser.testnet".parse().unwrap(),
+            "testnet".parse().unwrap(), // system_account
             "ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW"
                 .parse()
                 .unwrap(),
         );
         assert!(matches!(result, Err(RelayerError::InsufficientGasPool)));
+    }
+
+    #[test]
+    fn test_sponsor_account_unauthorized() {
+        let (mut contract, mut context) = setup_contract();
+        context
+            .predecessor_account_id(accounts(3)) // Not an auth account
+            .attached_deposit(NearToken::from_near(10))
+            .prepaid_gas(Gas::from_tgas(300));
+        testing_env!(context.build());
+        contract.deposit_gas_pool().unwrap();
+        let result = contract.sponsor_account(
+            "testuser.testnet".parse().unwrap(),
+            "testnet".parse().unwrap(), // system_account
+            "ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW"
+                .parse()
+                .unwrap(),
+        );
+        assert!(matches!(result, Err(RelayerError::Unauthorized)));
     }
 
     #[test]
@@ -648,15 +673,12 @@ mod tests {
         contract.deposit_gas_pool().unwrap();
         let initial_cost = 29_000_000_000_000_000_000_000; // 0.029 NEAR estimated cost
         let initial_gas_pool = contract.get_gas_pool().0;
-        // Simulate realistic gas usage (e.g., 5 TGas for callback itself)
         testing_env!(context
             .clone()
             .prepaid_gas(Gas::from_tgas(295)) // 300 TGas - 5 TGas used
             .build());
         contract.refund_gas_callback(initial_cost);
-        // Adjust refund calculation based on observed behavior
-        // Actual refund appears to be initial_cost (no subtraction in unit test env)
-        let expected_gas_pool = initial_gas_pool + initial_cost; // Full refund observed
+        let expected_gas_pool = initial_gas_pool + initial_cost; // Full refund in test env
         assert_eq!(
             contract.get_gas_pool().0,
             expected_gas_pool,
@@ -816,20 +838,30 @@ mod tests {
     #[test]
     fn test_sponsor_account_with_custom_max_gas() {
         let (mut contract, mut context) = setup_contract();
-        context.attached_deposit(NearToken::from_near(10))
-               .prepaid_gas(Gas::from_tgas(300));
+        context
+            .predecessor_account_id(accounts(1)) // Auth account
+            .attached_deposit(NearToken::from_near(10))
+            .prepaid_gas(Gas::from_tgas(300));
         testing_env!(context.build());
         contract.deposit_gas_pool().unwrap();
 
         let new_max_gas = U128(200 * 1_000_000_000_000); // 200 TGas
+        context.predecessor_account_id(accounts(0)); // Admin to set max_gas
+        testing_env!(context.build());
         contract.set_max_gas(new_max_gas).unwrap();
         assert_eq!(contract.get_max_gas().0, 200 * 1_000_000_000_000, "max_gas should be 200 TGas");
 
+        context.predecessor_account_id(accounts(1)); // Back to auth account
+        testing_env!(context.build());
         let initial_gas_pool = contract.get_gas_pool().0;
         let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
             .parse()
             .unwrap();
-        let result = contract.sponsor_account("testuser2".to_string(), public_key);
+        let result = contract.sponsor_account(
+            "testuser2.testnet".parse().unwrap(),
+            "testnet".parse().unwrap(), // system_account
+            public_key,
+        );
         assert!(result.is_ok(), "sponsor_account should succeed with custom max_gas: {:?}", result.err());
         assert_eq!(
             contract.get_gas_pool().0,
@@ -1069,5 +1101,114 @@ mod tests {
         let result = contract.set_callback_gas(boundary_callback_gas);
         assert!(result.is_ok(), "Setting callback_gas to minimum (5 TGas) should succeed");
         assert_eq!(contract.get_callback_gas().0, 5 * 1_000_000_000_000, "callback_gas should be 5 TGas");
+    }
+
+    // Tests for sponsor_account_signed
+    #[test]
+    fn test_sponsor_account_signed_success() {
+        let (mut contract, mut context) = setup_contract();
+        context
+            .predecessor_account_id(accounts(3)) // Random caller
+            .attached_deposit(NearToken::from_near(10))
+            .prepaid_gas(Gas::from_tgas(300));
+        testing_env!(context.build());
+        contract.deposit_gas_pool().unwrap();
+        let initial_gas_pool = contract.get_gas_pool().0;
+
+        let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
+            .parse()
+            .unwrap();
+        let signed_delegate = create_signed_delegate(
+            accounts(1), // Auth account
+            "testuser3.testnet".parse().unwrap(),
+            vec![Action::AddKey {
+                public_key,
+                allowance: None, // Full access key
+                receiver_id: "testuser3.testnet".parse().unwrap(),
+                method_names: vec![],
+            }],
+            None,
+        );
+        let result = contract.sponsor_account_signed(signed_delegate);
+        assert!(result.is_ok(), "sponsor_account_signed should succeed: {:?}", result.err());
+        assert_eq!(
+            contract.get_gas_pool().0,
+            initial_gas_pool - contract.relayer.sponsor_amount,
+            "Gas pool should decrease by sponsor_amount"
+        );
+    }
+
+    #[test]
+    fn test_sponsor_account_signed_unauthorized() {
+        let (mut contract, mut context) = setup_contract();
+        context
+            .predecessor_account_id(accounts(3)) // Random caller
+            .attached_deposit(NearToken::from_near(10))
+            .prepaid_gas(Gas::from_tgas(300));
+        testing_env!(context.build());
+        contract.deposit_gas_pool().unwrap();
+
+        let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
+            .parse()
+            .unwrap();
+        let signed_delegate = create_signed_delegate(
+            accounts(4), // Not an auth account
+            "testuser4.testnet".parse().unwrap(),
+            vec![Action::AddKey {
+                public_key,
+                allowance: None,
+                receiver_id: "testuser4.testnet".parse().unwrap(),
+                method_names: vec![],
+            }],
+            None,
+        );
+        let result = contract.sponsor_account_signed(signed_delegate);
+        assert!(matches!(result, Err(RelayerError::Unauthorized)), "Should fail with unauthorized signer");
+    }
+
+    #[test]
+    fn test_sponsor_account_signed_invalid_action() {
+        let (mut contract, mut context) = setup_contract();
+        context
+            .predecessor_account_id(accounts(3)) // Random caller
+            .attached_deposit(NearToken::from_near(10))
+            .prepaid_gas(Gas::from_tgas(300));
+        testing_env!(context.build());
+        contract.deposit_gas_pool().unwrap();
+
+        let signed_delegate = create_signed_delegate(
+            accounts(1), // Auth account
+            accounts(2),
+            vec![Action::Transfer { deposit: NearToken::from_near(1) }], // Wrong action
+            None,
+        );
+        let result = contract.sponsor_account_signed(signed_delegate);
+        assert!(matches!(result, Err(RelayerError::InvalidNonce)), "Should fail with invalid action");
+    }
+
+    #[test]
+    fn test_sponsor_account_signed_insufficient_gas() {
+        let (mut contract, mut context) = setup_contract();
+        context
+            .predecessor_account_id(accounts(3)) // Random caller
+            .prepaid_gas(Gas::from_tgas(300));
+        testing_env!(context.build());
+
+        let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
+            .parse()
+            .unwrap();
+        let signed_delegate = create_signed_delegate(
+            accounts(1), // Auth account
+            "testuser5.testnet".parse().unwrap(),
+            vec![Action::AddKey {
+                public_key,
+                allowance: None,
+                receiver_id: "testuser5.testnet".parse().unwrap(),
+                method_names: vec![],
+            }],
+            None,
+        );
+        let result = contract.sponsor_account_signed(signed_delegate);
+        assert!(matches!(result, Err(RelayerError::InsufficientGasPool)), "Should fail with insufficient gas");
     }
 }

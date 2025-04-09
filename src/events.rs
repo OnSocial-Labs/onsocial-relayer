@@ -42,5 +42,5 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     ContractUnpaused,
     #[event_version("1.0.0")]
-    MigrationCompleted { from_version: String, to_version: String }, // Changed to String
+    MigrationCompleted { from_version: String, to_version: String },
 }

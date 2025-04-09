@@ -24,7 +24,7 @@ trait SelfCallback {
     fn handle_bridge_result(&mut self, sender_id: AccountId, action_type: String, result: Vec<u8>);
 }
 
-fn verify_signature(signed_delegate: &SignedDelegateAction) -> Result<(), RelayerError> {
+pub fn verify_signature(signed_delegate: &SignedDelegateAction) -> Result<(), RelayerError> {
     let payload = borsh::to_vec(&signed_delegate.delegate_action).map_err(|_| RelayerError::InvalidNonce)?;
     match signed_delegate.scheme {
         SignatureScheme::Ed25519 => {
