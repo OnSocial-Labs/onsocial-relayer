@@ -1,0 +1,9 @@
+/workspaces/onsocial-relayer/borsh-helper/target/release/deps/libopentelemetry_semantic_conventions-b2657df9b8b2b405.rmeta: /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/lib.rs /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/resource.rs /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/trace.rs
+
+/workspaces/onsocial-relayer/borsh-helper/target/release/deps/libopentelemetry_semantic_conventions-b2657df9b8b2b405.rlib: /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/lib.rs /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/resource.rs /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/trace.rs
+
+/workspaces/onsocial-relayer/borsh-helper/target/release/deps/opentelemetry_semantic_conventions-b2657df9b8b2b405.d: /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/lib.rs /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/resource.rs /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/trace.rs
+
+/home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/lib.rs:
+/home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/resource.rs:
+/home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-semantic-conventions-0.14.0/src/trace.rs:

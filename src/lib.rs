@@ -28,11 +28,12 @@ impl Default for OnSocialRelayer {
 #[near]
 impl OnSocialRelayer {
     #[init]
-    pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth_key: PublicKey, offload_recipient: AccountId) -> Self {
-        Self {
-            relayer: Relayer::new(admins, initial_auth_account, initial_auth_key, offload_recipient),
-        }
+pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth_key: String, offload_recipient: AccountId) -> Self {
+    let initial_auth_key: PublicKey = initial_auth_key.parse().expect("Invalid public key");
+    Self {
+        relayer: Relayer::new(admins, initial_auth_account, initial_auth_key, offload_recipient),
     }
+}
 
     #[payable]
     pub fn deposit(&mut self) {
@@ -69,14 +70,14 @@ impl OnSocialRelayer {
 
     #[handle_result]
     pub fn sponsor_account(&mut self, #[serializer(borsh)] args: Vec<u8>) -> Result<Promise, RelayerError> {
-        env::log_str(&format!("Raw Borsh args received: {:?}", args));
-        let (new_account_id, public_key): (AccountId, PublicKey) = borsh::from_slice(&args)
-            .map_err(|e| {
-                env::log_str(&format!("Borsh deserialization error: {:?}", e));
-                RelayerError::InvalidNonce
-            })?;
-        env::log_str(&format!("Deserialized - new_account_id: {}, public_key: {:?}", new_account_id, public_key));
-        sponsor::sponsor_account(&mut self.relayer, new_account_id, public_key)
+    env::log_str(&format!("Raw args: {:?}", args));
+    let (new_account_id, public_key): (AccountId, PublicKey) = borsh::from_slice(&args)
+        .map_err(|e| {
+            env::log_str(&format!("Deserialization failed: {:?}", e));
+            RelayerError::InvalidNonce
+        })?;
+    env::log_str(&format!("Deserialized: {} {:?}", new_account_id, public_key));
+    sponsor::sponsor_account(&mut self.relayer, new_account_id, public_key)
     }
 
     #[handle_result]
