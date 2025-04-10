@@ -1,14 +1,8 @@
-use near_sdk::{env, Promise, PublicKey, AccountId, NearToken, Gas, borsh::{self, BorshSerialize}};
+use near_sdk::{env, Promise, PublicKey, AccountId, NearToken, Gas};
 use crate::state::Relayer;
 use crate::errors::RelayerError;
 use crate::relay::{ext_self, verify_signature};
 use crate::types::{Action, SignedDelegateAction};
-
-#[derive(BorshSerialize)]
-struct CreateAccountArgs {
-    new_account_id: AccountId,
-    new_public_key: PublicKey,
-}
 
 pub fn sponsor_account(relayer: &mut Relayer, new_account_id: AccountId, public_key: PublicKey) -> Result<Promise, RelayerError> {
     let caller = env::predecessor_account_id();
@@ -37,7 +31,6 @@ pub fn sponsor_account_signed(relayer: &mut Relayer, signed_delegate: SignedDele
     match &delegate.actions[0] {
         Action::AddKey { public_key, .. } => {
             let new_account_id = delegate.receiver_id.clone();
-            // For signed actions, we assume the receiver_id is the new account to create
             sponsor_account_inner(relayer, new_account_id, public_key.clone())
         }
         _ => Err(RelayerError::InvalidNonce),
@@ -49,36 +42,26 @@ fn sponsor_account_inner(relayer: &mut Relayer, new_account_id: AccountId, publi
         return Err(RelayerError::InsufficientGasPool);
     }
 
+    // Use relayer.max_gas and relayer.callback_gas directly, ensuring total <= 300 TGas
+    let prepaid_gas = env::prepaid_gas().as_gas();
+    let max_call_gas = relayer.max_gas;
+    let max_callback_gas = relayer.callback_gas;
+    let total_required_gas = max_call_gas.as_gas() + max_callback_gas.as_gas();
+    let max_allowed_gas = Gas::from_tgas(300).as_gas();
+
+    if total_required_gas > max_allowed_gas {
+        return Err(RelayerError::InsufficientGasPool); // Total exceeds 300 TGas
+    }
+    if prepaid_gas < total_required_gas {
+        return Err(RelayerError::InsufficientGasPool); // Prepaid gas insufficient
+    }
+
     relayer.gas_pool -= relayer.sponsor_amount;
 
-    let args = CreateAccountArgs {
-        new_account_id: new_account_id.clone(),
-        new_public_key: public_key,
-    };
-    let args_serialized = borsh::to_vec(&args).map_err(|_| RelayerError::InvalidAccountId)?;
-
-    let max_call_gas = if relayer.max_gas.as_tgas() > 270 { Gas::from_tgas(270) } else { relayer.max_gas };
-    let max_callback_gas = if relayer.callback_gas.as_tgas() > 10 { Gas::from_tgas(10) } else { relayer.callback_gas };
-    let total_gas = max_call_gas.as_tgas() + max_callback_gas.as_tgas();
-
-    let promise = if total_gas > 280 {
-        let adjusted_call_gas = Gas::from_tgas(280 - max_callback_gas.as_tgas());
-        Promise::new(relayer.registrar.clone())
-            .function_call(
-                "create_account".to_string(),
-                args_serialized,
-                NearToken::from_yoctonear(relayer.sponsor_amount),
-                adjusted_call_gas,
-            )
-    } else {
-        Promise::new(relayer.registrar.clone())
-            .function_call(
-                "create_account".to_string(),
-                args_serialized,
-                NearToken::from_yoctonear(relayer.sponsor_amount),
-                max_call_gas,
-            )
-    };
+    let promise = Promise::new(new_account_id.clone())
+        .create_account()
+        .add_full_access_key(public_key)
+        .transfer(NearToken::from_yoctonear(relayer.sponsor_amount));
 
     Ok(promise.then(
         ext_self::ext(env::current_account_id())

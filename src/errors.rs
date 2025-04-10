@@ -10,7 +10,14 @@ pub enum RelayerError {
     ContractPaused,
     InvalidAccountId,
     AmountTooLow,
+    AmountTooHigh,
     LastAdmin,
+    AlreadyExists,
+    CannotSelfRemove,
+    NotFound,
+    InvalidSignature,
+    InvalidRequestId,
+    InvalidChainId,
 }
 
 impl FunctionError for RelayerError {

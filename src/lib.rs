@@ -1,5 +1,6 @@
-use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, Gas};
+use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, ext_contract};
 use near_sdk::json_types::U128;
+use near_sdk::{borsh, PanicOnDefault};
 use crate::state::{Relayer, RelayerV1};
 use crate::types::SignedDelegateAction;
 use crate::errors::RelayerError;
@@ -14,26 +15,28 @@ mod relay;
 mod sponsor;
 mod gas_pool;
 
-#[near(contract_state)]
-pub struct OnSocialRelayer {
-    relayer: Relayer,
+#[ext_contract(ext_self)]
+pub trait SelfCallback {
+    fn refund_gas_callback(&mut self, initial_cost: u128);
+    fn handle_mpc_signature(&mut self, chain: String, request_id: u64, result: Vec<u8>);
+    fn handle_bridge_result(&mut self, sender_id: AccountId, action_type: String, result: Vec<u8>);
 }
 
-impl Default for OnSocialRelayer {
-    fn default() -> Self {
-        panic!("Use `new` to initialize");
-    }
+#[near(contract_state)]
+#[derive(PanicOnDefault)]
+pub struct OnSocialRelayer {
+    relayer: Relayer,
 }
 
 #[near]
 impl OnSocialRelayer {
     #[init]
-pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth_key: String, offload_recipient: AccountId) -> Self {
-    let initial_auth_key: PublicKey = initial_auth_key.parse().expect("Invalid public key");
-    Self {
-        relayer: Relayer::new(admins, initial_auth_account, initial_auth_key, offload_recipient),
+    pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth_key: String, offload_recipient: AccountId) -> Self {
+        let initial_auth_key: PublicKey = initial_auth_key.parse().expect("Invalid public key");
+        Self {
+            relayer: Relayer::new(admins, initial_auth_account, initial_auth_key, offload_recipient),
+        }
     }
-}
 
     #[payable]
     pub fn deposit(&mut self) {
@@ -70,14 +73,14 @@ pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth
 
     #[handle_result]
     pub fn sponsor_account(&mut self, #[serializer(borsh)] args: Vec<u8>) -> Result<Promise, RelayerError> {
-    env::log_str(&format!("Raw args: {:?}", args));
-    let (new_account_id, public_key): (AccountId, PublicKey) = borsh::from_slice(&args)
-        .map_err(|e| {
-            env::log_str(&format!("Deserialization failed: {:?}", e));
-            RelayerError::InvalidNonce
-        })?;
-    env::log_str(&format!("Deserialized: {} {:?}", new_account_id, public_key));
-    sponsor::sponsor_account(&mut self.relayer, new_account_id, public_key)
+        env::log_str(&format!("Raw args: {:?}", args));
+        let (new_account_id, public_key): (AccountId, PublicKey) = borsh::from_slice(&args)
+            .map_err(|e| {
+                env::log_str(&format!("Deserialization failed: {:?}", e));
+                RelayerError::InvalidNonce
+            })?;
+        env::log_str(&format!("Deserialized: {} {:?}", new_account_id, public_key));
+        sponsor::sponsor_account(&mut self.relayer, new_account_id, public_key)
     }
 
     #[handle_result]
@@ -142,20 +145,17 @@ pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth
 
     #[handle_result]
     pub fn set_max_gas(&mut self, new_max: U128) -> Result<(), RelayerError> {
-        let gas_value = new_max.0.try_into().map_err(|_| RelayerError::AmountTooLow)?;
-        admin::set_max_gas(&mut self.relayer, Gas::from_gas(gas_value))
+        admin::set_max_gas(&mut self.relayer, new_max.0)
     }
 
     #[handle_result]
     pub fn set_mpc_sign_gas(&mut self, new_gas: U128) -> Result<(), RelayerError> {
-        let gas_value = new_gas.0.try_into().map_err(|_| RelayerError::AmountTooLow)?;
-        admin::set_mpc_sign_gas(&mut self.relayer, Gas::from_gas(gas_value))
+        admin::set_mpc_sign_gas(&mut self.relayer, new_gas.0)
     }
 
     #[handle_result]
     pub fn set_callback_gas(&mut self, new_gas: U128) -> Result<(), RelayerError> {
-        let gas_value = new_gas.0.try_into().map_err(|_| RelayerError::AmountTooLow)?;
-        admin::set_callback_gas(&mut self.relayer, Gas::from_gas(gas_value))
+        admin::set_callback_gas(&mut self.relayer, new_gas.0)
     }
 
     #[handle_result]
@@ -176,6 +176,11 @@ pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth
     #[handle_result]
     pub fn migrate(&mut self) -> Result<(), RelayerError> {
         admin::migrate(&mut self.relayer)
+    }
+
+    #[handle_result]
+    pub fn set_gas_price(&mut self, new_gas_price: U128) -> Result<(), RelayerError> {
+        admin::set_gas_price(&mut self.relayer, new_gas_price.0)
     }
 
     pub fn get_gas_pool(&self) -> U128 {
@@ -222,10 +227,17 @@ pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth
         self.relayer.auth_accounts.contains_key(&account_id)
     }
 
+    pub fn get_gas_price(&self) -> U128 {
+        U128(self.relayer.gas_price)
+    }
+}
+
+#[near]
+impl OnSocialRelayer {
     #[private]
     pub fn refund_gas_callback(&mut self, initial_cost: u128) {
         let used_gas = env::used_gas().as_tgas() as u128;
-        let gas_price = 100_000_000_000; // 0.0001 Ⓝ/TGas in yoctoNEAR
+        let gas_price = self.relayer.gas_price;
         let actual_cost = used_gas * gas_price;
         let refund = initial_cost.saturating_sub(actual_cost);
         self.relayer.gas_pool += refund;

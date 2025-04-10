@@ -1,5 +1,5 @@
 use near_sdk::store::LookupMap;
-use near_sdk::{near, AccountId, PublicKey, BorshStorageKey, Gas};
+use near_sdk::{near, AccountId, PublicKey, BorshStorageKey, Gas, env};
 
 #[near(serializers=[borsh])]
 #[derive(BorshStorageKey)]
@@ -24,7 +24,8 @@ pub struct Relayer {
     pub callback_gas: Gas,
     pub paused: bool,
     pub version: String,
-    pub registrar: AccountId, // New field for configurable registrar
+    pub registrar: AccountId,
+    pub gas_price: u128, // Added field
 }
 
 impl Relayer {
@@ -48,7 +49,12 @@ impl Relayer {
             callback_gas: Gas::from_tgas(10),
             paused: false,
             version: "1.0".to_string(),
-            registrar: "testnet".parse().unwrap(), // Default to "testnet"
+            registrar: if env::current_account_id().as_str().ends_with(".near") {
+                "near".parse().unwrap() // Mainnet
+            } else {
+                "testnet".parse().unwrap() // Testnet
+            },
+            gas_price: 100_000_000_000, // 0.0001 Ⓝ/TGas
         }
     }
 
@@ -91,7 +97,12 @@ impl From<RelayerV1> for Relayer {
             callback_gas: old.callback_gas,
             paused: old.paused,
             version: "1.1".to_string(),
-            registrar: "testnet".parse().unwrap(), // Default for migration
+            registrar: if env::current_account_id().as_str().ends_with(".near") {
+                "near".parse().unwrap()
+            } else {
+                "testnet".parse().unwrap()
+            },
+            gas_price: 100_000_000_000, // Default value for migration
         }
     }
 }

@@ -44,5 +44,7 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     MigrationCompleted { from_version: String, to_version: String },
     #[event_version("1.0.0")]
-    RegistrarUpdated { new_registrar: AccountId }, // New event
+    RegistrarUpdated { new_registrar: AccountId },
+    #[event_version("1.0.0")]
+    GasPriceUpdated { new_gas_price: u128 }, // Added
 }

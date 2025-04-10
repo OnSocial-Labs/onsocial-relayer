@@ -133,42 +133,50 @@ pub fn set_chunk_size(relayer: &mut Relayer, new_size: usize) -> Result<(), Rela
     Ok(())
 }
 
-pub fn set_max_gas(relayer: &mut Relayer, new_max: Gas) -> Result<(), RelayerError> {
+pub fn set_max_gas(relayer: &mut Relayer, new_max: u128) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_max.as_tgas() < 50 {
+    if new_max < Gas::from_tgas(50).as_gas() as u128 {
         return Err(RelayerError::AmountTooLow);
     }
-    relayer.max_gas = new_max;
-    RelayerEvent::MaxGasUpdated { new_max: new_max.as_tgas() }.emit();
+    let total_gas = new_max + (relayer.callback_gas.as_gas() as u128);
+    if total_gas > Gas::from_tgas(300).as_gas() as u128 {
+        return Err(RelayerError::AmountTooHigh);
+    }
+    relayer.max_gas = Gas::from_gas(new_max as u64);
+    RelayerEvent::MaxGasUpdated { new_max: relayer.max_gas.as_tgas() }.emit();
     Ok(())
 }
 
-pub fn set_mpc_sign_gas(relayer: &mut Relayer, new_gas: Gas) -> Result<(), RelayerError> {
+pub fn set_mpc_sign_gas(relayer: &mut Relayer, new_gas: u128) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_gas.as_tgas() < 20 {
+    if new_gas < Gas::from_tgas(20).as_gas() as u128 {
         return Err(RelayerError::AmountTooLow);
     }
-    relayer.mpc_sign_gas = new_gas;
-    RelayerEvent::MpcSignGasUpdated { new_gas: new_gas.as_tgas() }.emit();
+    relayer.mpc_sign_gas = Gas::from_gas(new_gas as u64);
+    RelayerEvent::MpcSignGasUpdated { new_gas: relayer.mpc_sign_gas.as_tgas() }.emit();
     Ok(())
 }
 
-pub fn set_callback_gas(relayer: &mut Relayer, new_gas: Gas) -> Result<(), RelayerError> {
+pub fn set_callback_gas(relayer: &mut Relayer, new_gas: u128) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_gas.as_tgas() < 5 {
+    if new_gas < Gas::from_tgas(5).as_gas() as u128 {
         return Err(RelayerError::AmountTooLow);
     }
-    relayer.callback_gas = new_gas;
-    RelayerEvent::CallbackGasUpdated { new_gas: new_gas.as_tgas() }.emit();
+    let total_gas = (relayer.max_gas.as_gas() as u128) + new_gas;
+    if total_gas > Gas::from_tgas(300).as_gas() as u128 {
+        return Err(RelayerError::AmountTooHigh);
+    }
+    relayer.callback_gas = Gas::from_gas(new_gas as u64);
+    RelayerEvent::CallbackGasUpdated { new_gas: relayer.callback_gas.as_tgas() }.emit();
     Ok(())
 }
 
@@ -229,4 +237,17 @@ pub fn migrate(relayer: &mut Relayer) -> Result<(), RelayerError> {
         "1.1" => Ok(()),
         _ => Err(RelayerError::InvalidNonce),
     }
+}
+
+pub fn set_gas_price(relayer: &mut Relayer, new_gas_price: u128) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if new_gas_price < 50_000_000_000 { // Minimum 0.00005 Ⓝ/TGas
+        return Err(RelayerError::AmountTooLow);
+    }
+    relayer.gas_price = new_gas_price;
+    RelayerEvent::GasPriceUpdated { new_gas_price }.emit();
+    Ok(())
 }

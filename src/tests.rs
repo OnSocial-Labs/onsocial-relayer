@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use near_sdk::{testing_env, test_utils::VMContextBuilder, AccountId, PublicKey, NearToken, Gas};
+    use near_sdk::{testing_env, test_utils::VMContextBuilder, AccountId, PublicKey as SdkPublicKey, NearToken, Gas};
     use near_sdk::json_types::U128;
     use crate::{OnSocialRelayer, RelayerError};
     use crate::types::{SignedDelegateAction, DelegateAction, Action, SignatureScheme};
-    use near_crypto::{InMemorySigner, KeyType, Signature};
+    use near_crypto::{InMemorySigner, KeyType, Signature, PublicKey as CryptoPublicKey};
+    use bs58;
 
     fn setup_contract() -> (OnSocialRelayer, VMContextBuilder) {
         let mut context = VMContextBuilder::new();
@@ -13,11 +14,16 @@ mod tests {
             .attached_deposit(NearToken::from_near(0));
         testing_env!(context.build());
         let signer = InMemorySigner::from_seed(accounts(1), KeyType::ED25519, "test-seed");
-        let public_key = PublicKey::try_from(borsh::to_vec(&signer.public_key()).unwrap()).unwrap();
+        let public_key = signer.public_key();
+        let public_key_bytes = match public_key {
+            CryptoPublicKey::ED25519(key) => key.0.to_vec(),
+            _ => panic!("Expected ED25519 key"),
+        };
+        let public_key_str = format!("ed25519:{}", bs58::encode(&public_key_bytes).into_string());
         let contract = OnSocialRelayer::new(
             vec![accounts(0)], // admins
             accounts(1),       // initial_auth_account
-            public_key,
+            public_key_str,    // Pass as String
             accounts(2),       // offload_recipient
         );
         (contract, context)
@@ -30,7 +36,13 @@ mod tests {
         fee_action: Option<Action>,
     ) -> SignedDelegateAction {
         let signer = InMemorySigner::from_seed(sender_id.clone(), KeyType::ED25519, "test-seed");
-        let public_key = PublicKey::try_from(borsh::to_vec(&signer.public_key()).unwrap()).unwrap();
+        let public_key = signer.public_key();
+        let public_key_bytes = match public_key {
+            CryptoPublicKey::ED25519(key) => key.0.to_vec(),
+            _ => panic!("Expected ED25519 key"),
+        };
+        let public_key_str = format!("ed25519:{}", bs58::encode(&public_key_bytes).into_string());
+        let public_key = public_key_str.parse::<SdkPublicKey>().unwrap();
         let delegate_action = DelegateAction {
             sender_id,
             receiver_id,
@@ -60,24 +72,44 @@ mod tests {
 
     #[test]
     fn test_new_contract() {
-        let (contract, _) = setup_contract();
-        assert_eq!(contract.relayer.admins, vec![accounts(0)]);
+        let mut context = VMContextBuilder::new();
+        context
+            .predecessor_account_id(accounts(0)) // Admin
+            .attached_deposit(NearToken::from_near(0));
+        testing_env!(context.build());
         let signer = InMemorySigner::from_seed(accounts(1), KeyType::ED25519, "test-seed");
-        let expected_pk = PublicKey::try_from(borsh::to_vec(&signer.public_key()).unwrap()).unwrap();
-        assert_eq!(contract.relayer.auth_accounts.get(&accounts(1)).unwrap(), &expected_pk);
+        let public_key = signer.public_key();
+        let public_key_bytes = match public_key {
+            CryptoPublicKey::ED25519(key) => key.0.to_vec(),
+            _ => panic!("Expected ED25519 key"),
+        };
+        let public_key_str = format!("ed25519:{}", bs58::encode(&public_key_bytes).into_string());
+        let contract = OnSocialRelayer::new(
+            vec![accounts(0)],
+            accounts(1),
+            public_key_str.clone(),
+            accounts(2),
+        );
+        assert_eq!(contract.relayer.admins, vec![accounts(0)]);
+        let expected_pk = public_key_str.parse::<SdkPublicKey>().unwrap();
+        assert_eq!(
+            contract.relayer.auth_accounts.get(&accounts(1)).unwrap(),
+            &expected_pk,
+            "Public key should match"
+        );
         assert_eq!(contract.relayer.gas_pool, 0);
         assert_eq!(contract.relayer.chunk_size, 5);
         assert_eq!(
             contract.relayer.chain_mpc_mapping.get(&"near".to_string()),
-            Some(&"mpc.near".parse().unwrap())
+            Some(&"mpc.near".parse::<AccountId>().unwrap())
         );
         assert_eq!(contract.get_version(), "1.0", "Initial version should be 1.0");
     }
 
     #[test]
-    #[should_panic(expected = "Use `new` to initialize")]
+    #[should_panic(expected = "The contract is not initialized")]
     fn test_default_panics() {
-        let _ = OnSocialRelayer::default();
+    let _ = OnSocialRelayer::default();
     }
 
     #[test]
@@ -93,7 +125,7 @@ mod tests {
         assert_eq!(
             contract.relayer.auth_accounts.get(&accounts(3)).unwrap(),
             &"ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW"
-                .parse::<PublicKey>()
+                .parse::<SdkPublicKey>()
                 .unwrap()
         );
     }
@@ -601,48 +633,65 @@ mod tests {
     }
 
     #[test]
-    fn test_sponsor_account() {
-        let (mut contract, mut context) = setup_contract();
-        context
-            .predecessor_account_id(accounts(1)) // Auth account
-            .attached_deposit(NearToken::from_near(10))
-            .prepaid_gas(Gas::from_tgas(300));
-        testing_env!(context.build());
+fn test_sponsor_account_success() {
+    let (mut contract, mut context) = setup_contract();
+    context
+        .predecessor_account_id(accounts(0)) // Admin to set registrar
+        .attached_deposit(NearToken::from_near(0))
+        .prepaid_gas(Gas::from_tgas(300));
+    testing_env!(context.build());
     
-        contract.deposit_gas_pool().unwrap();
-        let initial_gas_pool = contract.get_gas_pool().0;
+    // Set registrar to "testnet" explicitly
+    contract.set_registrar("testnet".parse().unwrap()).expect("Failed to set registrar");
+
+    // Now proceed as auth account
+    context
+        .predecessor_account_id(accounts(1)) // Auth account
+        .attached_deposit(NearToken::from_near(10));
+    testing_env!(context.build());
     
-        let new_account_id: AccountId = "testuser1.testnet".parse().unwrap();
-        let public_key: PublicKey = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
-            .parse()
-            .unwrap();
-        // Serialize the (AccountId, PublicKey) tuple into Borsh bytes
-        let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
-        let result = contract.sponsor_account(args);
+    contract.deposit_gas_pool().unwrap();
+    let initial_gas_pool = contract.get_gas_pool().0;
     
-        assert!(result.is_ok(), "Expected sponsor_account to succeed, got {:?}", result.err());
-        assert_eq!(
-            contract.get_gas_pool().0,
-            initial_gas_pool - contract.relayer.sponsor_amount,
-            "Gas pool should decrease by sponsor_amount"
-        );
-    }
+    let new_account_id: AccountId = "michael.testnet".parse().unwrap();
+    let public_key: SdkPublicKey = "ed25519:FPTYPPndEJ35n1MxpWPVqD6hyWLGi8Hpby4Ap1dbjBKs"
+        .parse()
+        .unwrap();
+    let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
+    let result = contract.sponsor_account(args);
+    
+    assert!(result.is_ok(), "Expected sponsor_account to succeed, got {:?}", result.err());
+    assert_eq!(
+        contract.get_gas_pool().0,
+        initial_gas_pool - 100_000_000_000_000_000_000_000, // 0.1 NEAR
+        "Gas pool should decrease by 0.1 NEAR"
+    );
+    assert_eq!(
+        contract.get_registrar(),
+        "testnet".parse::<AccountId>().unwrap(),
+        "Registrar should be testnet in test env"
+    );
+}
 
     #[test]
     fn test_sponsor_account_insufficient_gas() {
         let (mut contract, mut context) = setup_contract();
-        context.predecessor_account_id(accounts(1)); // Auth account
+        context
+            .predecessor_account_id(accounts(1)) // Auth account
+            .attached_deposit(NearToken::from_millinear(500)) // 0.5 NEAR, less than min + sponsor
+            .prepaid_gas(Gas::from_tgas(300));
         testing_env!(context.build());
         
-        let new_account_id: AccountId = "testuser.testnet".parse().unwrap();
-        let public_key: PublicKey = "ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW"
+        contract.deposit_gas_pool().unwrap();
+        
+        let new_account_id: AccountId = "michael.testnet".parse().unwrap();
+        let public_key: SdkPublicKey = "ed25519:FPTYPPndEJ35n1MxpWPVqD6hyWLGi8Hpby4Ap1dbjBKs"
             .parse()
             .unwrap();
-        // Serialize the (AccountId, PublicKey) tuple into Borsh bytes
         let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
         let result = contract.sponsor_account(args);
         
-        assert!(matches!(result, Err(RelayerError::InsufficientGasPool)));
+        assert!(matches!(result, Err(RelayerError::InsufficientGasPool)), "Should fail with insufficient gas");
     }
 
     #[test]
@@ -655,15 +704,80 @@ mod tests {
         testing_env!(context.build());
         contract.deposit_gas_pool().unwrap();
         
-        let new_account_id: AccountId = "testuser.testnet".parse().unwrap();
-        let public_key: PublicKey = "ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW"
+        let new_account_id: AccountId = "michael.testnet".parse().unwrap();
+        let public_key: SdkPublicKey = "ed25519:FPTYPPndEJ35n1MxpWPVqD6hyWLGi8Hpby4Ap1dbjBKs"
             .parse()
             .unwrap();
-        // Serialize the (AccountId, PublicKey) tuple into Borsh bytes
         let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
         let result = contract.sponsor_account(args);
         
-        assert!(matches!(result, Err(RelayerError::Unauthorized)));
+        assert!(matches!(result, Err(RelayerError::Unauthorized)), "Should fail with unauthorized caller");
+    }
+
+    #[test]
+    fn test_sponsor_account_mainnet_registrar() {
+        let mut context = VMContextBuilder::new();
+        context
+            .current_account_id("relayer.onsocial.near".parse().unwrap())
+            .predecessor_account_id(accounts(0)) // Admin
+            .attached_deposit(NearToken::from_near(0));
+        testing_env!(context.build());
+        let signer = InMemorySigner::from_seed(accounts(1), KeyType::ED25519, "test-seed");
+        let public_key = signer.public_key();
+        let public_key_bytes = match public_key {
+            CryptoPublicKey::ED25519(key) => key.0.to_vec(),
+            _ => panic!("Expected ED25519 key"),
+        };
+        let public_key_str = format!("ed25519:{}", bs58::encode(&public_key_bytes).into_string());
+        let mut contract = OnSocialRelayer::new(
+            vec![accounts(0)],
+            accounts(1),
+            public_key_str,
+            accounts(2),
+        );
+
+        context
+            .predecessor_account_id(accounts(1)) // Auth account
+            .attached_deposit(NearToken::from_near(10))
+            .prepaid_gas(Gas::from_tgas(300));
+        testing_env!(context.build());
+        contract.deposit_gas_pool().unwrap();
+        let initial_gas_pool = contract.get_gas_pool().0;
+
+        let new_account_id: AccountId = "michael.near".parse().unwrap();
+        let public_key: SdkPublicKey = "ed25519:FPTYPPndEJ35n1MxpWPVqD6hyWLGi8Hpby4Ap1dbjBKs"
+            .parse()
+            .unwrap();
+        let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
+        let result = contract.sponsor_account(args);
+
+        assert!(result.is_ok(), "Expected sponsor_account to succeed on mainnet, got {:?}", result.err());
+        assert_eq!(
+            contract.get_gas_pool().0,
+            initial_gas_pool - 100_000_000_000_000_000_000_000, // 0.1 NEAR
+            "Gas pool should decrease by 0.1 NEAR"
+        );
+        assert_eq!(
+            contract.get_registrar(),
+            "near".parse::<AccountId>().unwrap(),
+            "Registrar should be near on mainnet"
+        );
+    }
+
+    #[test]
+    fn test_sponsor_account_serialization_failure() {
+        let (mut contract, mut context) = setup_contract();
+        context
+            .predecessor_account_id(accounts(1)) // Auth account
+            .attached_deposit(NearToken::from_near(10))
+            .prepaid_gas(Gas::from_tgas(300));
+        testing_env!(context.build());
+        contract.deposit_gas_pool().unwrap();
+
+        let args = vec![1, 2, 3]; // Invalid Borsh data
+        let result = contract.sponsor_account(args);
+
+        assert!(matches!(result, Err(RelayerError::InvalidNonce)), "Should fail with invalid serialization");
     }
 
     #[test]
@@ -858,10 +972,9 @@ mod tests {
         testing_env!(context.build());
         let initial_gas_pool = contract.get_gas_pool().0;
         let new_account_id: AccountId = "testuser2.testnet".parse().unwrap();
-        let public_key: PublicKey = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
+        let public_key: SdkPublicKey = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
             .parse()
             .unwrap();
-        // Serialize the (AccountId, PublicKey) tuple into Borsh bytes
         let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
         let result = contract.sponsor_account(args);
         assert!(result.is_ok(), "sponsor_account should succeed with custom max_gas: {:?}", result.err());
@@ -1105,7 +1218,6 @@ mod tests {
         assert_eq!(contract.get_callback_gas().0, 5 * 1_000_000_000_000, "callback_gas should be 5 TGas");
     }
 
-    // Tests for sponsor_account_signed
     #[test]
     fn test_sponsor_account_signed_success() {
         let (mut contract, mut context) = setup_contract();
@@ -1118,7 +1230,7 @@ mod tests {
         let initial_gas_pool = contract.get_gas_pool().0;
 
         let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
-            .parse()
+            .parse::<SdkPublicKey>()
             .unwrap();
         let signed_delegate = create_signed_delegate(
             accounts(1), // Auth account
@@ -1151,7 +1263,7 @@ mod tests {
         contract.deposit_gas_pool().unwrap();
 
         let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
-            .parse()
+            .parse::<SdkPublicKey>()
             .unwrap();
         let signed_delegate = create_signed_delegate(
             accounts(4), // Not an auth account
@@ -1197,7 +1309,7 @@ mod tests {
         testing_env!(context.build());
 
         let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
-            .parse()
+            .parse::<SdkPublicKey>()
             .unwrap();
         let signed_delegate = create_signed_delegate(
             accounts(1), // Auth account
