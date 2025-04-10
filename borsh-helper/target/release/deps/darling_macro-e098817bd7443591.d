@@ -1,5 +1,0 @@
-/workspaces/onsocial-relayer/borsh-helper/target/release/deps/libdarling_macro-e098817bd7443591.so: /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/darling_macro-0.20.11/src/lib.rs
-
-/workspaces/onsocial-relayer/borsh-helper/target/release/deps/darling_macro-e098817bd7443591.d: /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/darling_macro-0.20.11/src/lib.rs
-
-/home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/darling_macro-0.20.11/src/lib.rs:
