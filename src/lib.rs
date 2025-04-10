@@ -68,8 +68,15 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
-    pub fn sponsor_account(&mut self, new_account_id: AccountId, system_account: AccountId, public_key: PublicKey) -> Result<Promise, RelayerError> {
-        sponsor::sponsor_account(&mut self.relayer, new_account_id, system_account, public_key)
+    pub fn sponsor_account(&mut self, #[serializer(borsh)] args: Vec<u8>) -> Result<Promise, RelayerError> {
+        env::log_str(&format!("Raw Borsh args received: {:?}", args));
+        let (new_account_id, public_key): (AccountId, PublicKey) = borsh::from_slice(&args)
+            .map_err(|e| {
+                env::log_str(&format!("Borsh deserialization error: {:?}", e));
+                RelayerError::InvalidNonce
+            })?;
+        env::log_str(&format!("Deserialized - new_account_id: {}, public_key: {:?}", new_account_id, public_key));
+        sponsor::sponsor_account(&mut self.relayer, new_account_id, public_key)
     }
 
     #[handle_result]
@@ -151,6 +158,11 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
+    pub fn set_registrar(&mut self, new_registrar: AccountId) -> Result<(), RelayerError> {
+        admin::set_registrar(&mut self.relayer, new_registrar)
+    }
+
+    #[handle_result]
     pub fn pause(&mut self) -> Result<(), RelayerError> {
         admin::pause(&mut self.relayer)
     }
@@ -193,12 +205,20 @@ impl OnSocialRelayer {
         U128(self.relayer.callback_gas.as_gas() as u128)
     }
 
+    pub fn get_registrar(&self) -> AccountId {
+        self.relayer.registrar.clone()
+    }
+
     pub fn is_paused(&self) -> bool {
         self.relayer.paused
     }
 
     pub fn get_version(&self) -> String {
         self.relayer.version.clone()
+    }
+
+    pub fn is_authorized(&self, account_id: AccountId) -> bool {
+        self.relayer.auth_accounts.contains_key(&account_id)
     }
 
     #[private]

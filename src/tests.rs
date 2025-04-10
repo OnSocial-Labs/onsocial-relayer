@@ -612,14 +612,13 @@ mod tests {
         contract.deposit_gas_pool().unwrap();
         let initial_gas_pool = contract.get_gas_pool().0;
     
-        let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
+        let new_account_id: AccountId = "testuser1.testnet".parse().unwrap();
+        let public_key: PublicKey = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
             .parse()
             .unwrap();
-        let result = contract.sponsor_account(
-            "testuser1.testnet".parse().unwrap(),
-            "testnet".parse().unwrap(), // system_account
-            public_key,
-        );
+        // Serialize the (AccountId, PublicKey) tuple into Borsh bytes
+        let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
+        let result = contract.sponsor_account(args);
     
         assert!(result.is_ok(), "Expected sponsor_account to succeed, got {:?}", result.err());
         assert_eq!(
@@ -634,13 +633,15 @@ mod tests {
         let (mut contract, mut context) = setup_contract();
         context.predecessor_account_id(accounts(1)); // Auth account
         testing_env!(context.build());
-        let result = contract.sponsor_account(
-            "testuser.testnet".parse().unwrap(),
-            "testnet".parse().unwrap(), // system_account
-            "ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW"
-                .parse()
-                .unwrap(),
-        );
+        
+        let new_account_id: AccountId = "testuser.testnet".parse().unwrap();
+        let public_key: PublicKey = "ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW"
+            .parse()
+            .unwrap();
+        // Serialize the (AccountId, PublicKey) tuple into Borsh bytes
+        let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
+        let result = contract.sponsor_account(args);
+        
         assert!(matches!(result, Err(RelayerError::InsufficientGasPool)));
     }
 
@@ -653,13 +654,15 @@ mod tests {
             .prepaid_gas(Gas::from_tgas(300));
         testing_env!(context.build());
         contract.deposit_gas_pool().unwrap();
-        let result = contract.sponsor_account(
-            "testuser.testnet".parse().unwrap(),
-            "testnet".parse().unwrap(), // system_account
-            "ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW"
-                .parse()
-                .unwrap(),
-        );
+        
+        let new_account_id: AccountId = "testuser.testnet".parse().unwrap();
+        let public_key: PublicKey = "ed25519:8fWHEecB2iXjZ75kMYG34M2DSELK9nQ31K3vQ3Wy4nqW"
+            .parse()
+            .unwrap();
+        // Serialize the (AccountId, PublicKey) tuple into Borsh bytes
+        let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
+        let result = contract.sponsor_account(args);
+        
         assert!(matches!(result, Err(RelayerError::Unauthorized)));
     }
 
@@ -854,14 +857,13 @@ mod tests {
         context.predecessor_account_id(accounts(1)); // Back to auth account
         testing_env!(context.build());
         let initial_gas_pool = contract.get_gas_pool().0;
-        let public_key = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
+        let new_account_id: AccountId = "testuser2.testnet".parse().unwrap();
+        let public_key: PublicKey = "ed25519:DP8d4JWrG8TFvQz83EJSVphUTEpQ41mzqPMyZMigCN17"
             .parse()
             .unwrap();
-        let result = contract.sponsor_account(
-            "testuser2.testnet".parse().unwrap(),
-            "testnet".parse().unwrap(), // system_account
-            public_key,
-        );
+        // Serialize the (AccountId, PublicKey) tuple into Borsh bytes
+        let args = borsh::to_vec(&(new_account_id.clone(), public_key.clone())).unwrap();
+        let result = contract.sponsor_account(args);
         assert!(result.is_ok(), "sponsor_account should succeed with custom max_gas: {:?}", result.err());
         assert_eq!(
             contract.get_gas_pool().0,

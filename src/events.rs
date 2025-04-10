@@ -43,4 +43,6 @@ pub enum RelayerEvent {
     ContractUnpaused,
     #[event_version("1.0.0")]
     MigrationCompleted { from_version: String, to_version: String },
+    #[event_version("1.0.0")]
+    RegistrarUpdated { new_registrar: AccountId }, // New event
 }

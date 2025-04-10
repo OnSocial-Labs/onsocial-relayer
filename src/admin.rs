@@ -172,6 +172,16 @@ pub fn set_callback_gas(relayer: &mut Relayer, new_gas: Gas) -> Result<(), Relay
     Ok(())
 }
 
+pub fn set_registrar(relayer: &mut Relayer, new_registrar: AccountId) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    relayer.registrar = new_registrar.clone();
+    RelayerEvent::RegistrarUpdated { new_registrar }.emit();
+    Ok(())
+}
+
 pub fn pause(relayer: &mut Relayer) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {

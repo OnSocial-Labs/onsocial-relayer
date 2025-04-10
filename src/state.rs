@@ -24,6 +24,7 @@ pub struct Relayer {
     pub callback_gas: Gas,
     pub paused: bool,
     pub version: String,
+    pub registrar: AccountId, // New field for configurable registrar
 }
 
 impl Relayer {
@@ -47,6 +48,7 @@ impl Relayer {
             callback_gas: Gas::from_tgas(10),
             paused: false,
             version: "1.0".to_string(),
+            registrar: "testnet".parse().unwrap(), // Default to "testnet"
         }
     }
 
@@ -89,6 +91,7 @@ impl From<RelayerV1> for Relayer {
             callback_gas: old.callback_gas,
             paused: old.paused,
             version: "1.1".to_string(),
+            registrar: "testnet".parse().unwrap(), // Default for migration
         }
     }
 }

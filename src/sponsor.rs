@@ -10,12 +10,12 @@ struct CreateAccountArgs {
     new_public_key: PublicKey,
 }
 
-pub fn sponsor_account(relayer: &mut Relayer, new_account_id: AccountId, system_account: AccountId, public_key: PublicKey) -> Result<Promise, RelayerError> {
+pub fn sponsor_account(relayer: &mut Relayer, new_account_id: AccountId, public_key: PublicKey) -> Result<Promise, RelayerError> {
     let caller = env::predecessor_account_id();
     if relayer.paused || !relayer.auth_accounts.contains_key(&caller) {
         return Err(if relayer.paused { RelayerError::ContractPaused } else { RelayerError::Unauthorized });
     }
-    sponsor_account_inner(relayer, new_account_id, system_account, public_key)
+    sponsor_account_inner(relayer, new_account_id, public_key)
 }
 
 pub fn sponsor_account_signed(relayer: &mut Relayer, signed_delegate: SignedDelegateAction) -> Result<Promise, RelayerError> {
@@ -37,19 +37,14 @@ pub fn sponsor_account_signed(relayer: &mut Relayer, signed_delegate: SignedDele
     match &delegate.actions[0] {
         Action::AddKey { public_key, .. } => {
             let new_account_id = delegate.receiver_id.clone();
-            // Assume system_account is the TLD part of receiver_id (e.g., "cult" for "user.cult")
-            let parts: Vec<&str> = new_account_id.as_str().split('.').collect();
-            if parts.len() < 2 {
-                return Err(RelayerError::InvalidAccountId);
-            }
-            let system_account = parts.last().unwrap().parse().map_err(|_| RelayerError::InvalidAccountId)?;
-            sponsor_account_inner(relayer, new_account_id, system_account, public_key.clone())
+            // For signed actions, we assume the receiver_id is the new account to create
+            sponsor_account_inner(relayer, new_account_id, public_key.clone())
         }
         _ => Err(RelayerError::InvalidNonce),
     }
 }
 
-fn sponsor_account_inner(relayer: &mut Relayer, new_account_id: AccountId, system_account: AccountId, public_key: PublicKey) -> Result<Promise, RelayerError> {
+fn sponsor_account_inner(relayer: &mut Relayer, new_account_id: AccountId, public_key: PublicKey) -> Result<Promise, RelayerError> {
     if relayer.gas_pool < relayer.min_gas_pool + relayer.sponsor_amount {
         return Err(RelayerError::InsufficientGasPool);
     }
@@ -65,32 +60,29 @@ fn sponsor_account_inner(relayer: &mut Relayer, new_account_id: AccountId, syste
     let max_call_gas = if relayer.max_gas.as_tgas() > 270 { Gas::from_tgas(270) } else { relayer.max_gas };
     let max_callback_gas = if relayer.callback_gas.as_tgas() > 10 { Gas::from_tgas(10) } else { relayer.callback_gas };
     let total_gas = max_call_gas.as_tgas() + max_callback_gas.as_tgas();
-    if total_gas > 280 {
+
+    let promise = if total_gas > 280 {
         let adjusted_call_gas = Gas::from_tgas(280 - max_callback_gas.as_tgas());
-        let promise = Promise::new(system_account)
+        Promise::new(relayer.registrar.clone())
             .function_call(
                 "create_account".to_string(),
                 args_serialized,
                 NearToken::from_yoctonear(relayer.sponsor_amount),
                 adjusted_call_gas,
-            );
-        Ok(promise.then(
-            ext_self::ext(env::current_account_id())
-                .with_static_gas(max_callback_gas)
-                .refund_gas_callback(relayer.sponsor_amount)
-        ))
+            )
     } else {
-        let promise = Promise::new(system_account)
+        Promise::new(relayer.registrar.clone())
             .function_call(
                 "create_account".to_string(),
                 args_serialized,
                 NearToken::from_yoctonear(relayer.sponsor_amount),
                 max_call_gas,
-            );
-        Ok(promise.then(
-            ext_self::ext(env::current_account_id())
-                .with_static_gas(max_callback_gas)
-                .refund_gas_callback(relayer.sponsor_amount)
-        ))
-    }
+            )
+    };
+
+    Ok(promise.then(
+        ext_self::ext(env::current_account_id())
+            .with_static_gas(max_callback_gas)
+            .refund_gas_callback(relayer.sponsor_amount)
+    ))
 }
