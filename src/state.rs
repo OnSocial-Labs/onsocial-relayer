@@ -1,108 +1,103 @@
-use near_sdk::store::LookupMap;
-use near_sdk::{near, AccountId, PublicKey, BorshStorageKey, Gas, env};
+use near_sdk::{AccountId, env};
+use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::store::{LazyOption, LookupMap, Vector};
+use near_sdk_macros::NearSchema;
 
-#[near(serializers=[borsh])]
-#[derive(BorshStorageKey)]
-pub enum StorageKey {
-    AuthAccounts,
-    ChainMpcMapping,
+#[derive(BorshDeserialize, BorshSerialize, NearSchema)]
+#[abi(borsh)]
+pub struct RelayerV1 {
+    pub admins: Vector<AccountId>,
+    pub offload_recipient: AccountId,
+    pub auth_contract: AccountId,
+    pub ft_wrapper_contract: AccountId,
+    pub version: String,
 }
 
-#[near(serializers=[borsh])]
+#[derive(BorshDeserialize, BorshSerialize, NearSchema)]
+#[abi(borsh)]
 pub struct Relayer {
-    pub gas_pool: u128,
-    pub min_gas_pool: u128,
-    pub max_gas_pool: u128,
-    pub sponsor_amount: u128,
+    pub admins: Vector<AccountId>,
     pub offload_recipient: AccountId,
-    pub admins: Vec<AccountId>,
-    pub auth_accounts: LookupMap<AccountId, PublicKey>,
+    pub auth_contract: AccountId,
+    pub ft_wrapper_contract: AccountId,
+    pub omni_locker_contract: LazyOption<AccountId>,
     pub chain_mpc_mapping: LookupMap<String, AccountId>,
+    pub sponsor_amount: u128,
+    pub sponsor_gas: u64,
+    pub cross_contract_gas: u64,
     pub chunk_size: usize,
-    pub max_gas: Gas,
-    pub mpc_sign_gas: Gas,
-    pub callback_gas: Gas,
     pub paused: bool,
     pub version: String,
-    pub registrar: AccountId,
-    pub gas_price: u128, // Added field
-}
-
-impl Relayer {
-    pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth_key: PublicKey, offload_recipient: AccountId) -> Self {
-        let mut auth_accounts = LookupMap::new(StorageKey::AuthAccounts);
-        auth_accounts.insert(initial_auth_account, initial_auth_key);
-        let mut chain_mpc_mapping = LookupMap::new(StorageKey::ChainMpcMapping);
-        chain_mpc_mapping.insert("near".to_string(), "mpc.near".parse().unwrap());
-        Self {
-            gas_pool: 0,
-            min_gas_pool: 1_000_000_000_000_000_000_000_000, // 1 NEAR
-            max_gas_pool: 500_000_000_000_000_000_000_000_000, // 500 NEAR
-            sponsor_amount: 100_000_000_000_000_000_000_000, // 0.1 NEAR
-            offload_recipient,
-            admins,
-            auth_accounts,
-            chain_mpc_mapping,
-            chunk_size: 5,
-            max_gas: Gas::from_tgas(250),
-            mpc_sign_gas: Gas::from_tgas(100),
-            callback_gas: Gas::from_tgas(10),
-            paused: false,
-            version: "1.0".to_string(),
-            registrar: if env::current_account_id().as_str().ends_with(".near") {
-                "near".parse().unwrap() // Mainnet
-            } else {
-                "testnet".parse().unwrap() // Testnet
-            },
-            gas_price: 100_000_000_000, // 0.0001 Ⓝ/TGas
-        }
-    }
-
-    pub fn is_admin(&self, caller: &AccountId) -> bool {
-        self.admins.contains(caller)
-    }
-}
-
-#[near(serializers=[borsh])]
-pub struct RelayerV1 {
-    pub gas_pool: u128,
-    pub min_gas_pool: u128,
-    pub max_gas_pool: u128,
-    pub sponsor_amount: u128,
-    pub offload_recipient: AccountId,
-    pub admins: Vec<AccountId>,
-    pub auth_accounts: LookupMap<AccountId, PublicKey>,
-    pub chain_mpc_mapping: LookupMap<String, AccountId>,
-    pub chunk_size: usize,
-    pub max_gas: Gas,
-    pub mpc_sign_gas: Gas,
-    pub callback_gas: Gas,
-    pub paused: bool,
+    pub migration_version: u64,
+    pub min_balance: u128,
+    pub max_balance: u128,
+    pub base_fee: u128,
+    pub transfer_nonces: LookupMap<String, u64>,
 }
 
 impl From<RelayerV1> for Relayer {
-    fn from(old: RelayerV1) -> Self {
+    fn from(v1: RelayerV1) -> Self {
         Self {
-            gas_pool: old.gas_pool,
-            min_gas_pool: old.min_gas_pool,
-            max_gas_pool: old.max_gas_pool,
-            sponsor_amount: old.sponsor_amount,
-            offload_recipient: old.offload_recipient,
-            admins: old.admins,
-            auth_accounts: old.auth_accounts,
-            chain_mpc_mapping: old.chain_mpc_mapping,
-            chunk_size: old.chunk_size,
-            max_gas: old.max_gas,
-            mpc_sign_gas: old.mpc_sign_gas,
-            callback_gas: old.callback_gas,
-            paused: old.paused,
-            version: "1.1".to_string(),
-            registrar: if env::current_account_id().as_str().ends_with(".near") {
-                "near".parse().unwrap()
-            } else {
-                "testnet".parse().unwrap()
-            },
-            gas_price: 100_000_000_000, // Default value for migration
+            admins: v1.admins,
+            offload_recipient: v1.offload_recipient,
+            auth_contract: v1.auth_contract,
+            ft_wrapper_contract: v1.ft_wrapper_contract,
+            omni_locker_contract: LazyOption::new(b"omni_locker".to_vec(), Some(env::current_account_id())),
+            chain_mpc_mapping: LookupMap::new(b"chain_mpc".to_vec()),
+            sponsor_amount: 10_000_000_000_000_000_000_000,
+            sponsor_gas: 100_000_000_000_000,
+            cross_contract_gas: 100_000_000_000_000,
+            chunk_size: 10,
+            paused: false,
+            version: v1.version,
+            migration_version: 0,
+            min_balance: 10_000_000_000_000_000_000_000_000,
+            max_balance: 1_000_000_000_000_000_000_000_000_000,
+            base_fee: 1_000_000_000_000_000_000_000,
+            transfer_nonces: LookupMap::new(b"nonces".to_vec()),
         }
+    }
+}
+
+impl Relayer {
+    pub fn new(
+        admins: Vec<AccountId>,
+        offload_recipient: AccountId,
+        auth_contract: AccountId,
+        ft_wrapper_contract: AccountId,
+    ) -> Self {
+        let mut admin_vec = Vector::new(b"admins".to_vec());
+        for admin in admins {
+            admin_vec.push(admin);
+        }
+        Self {
+            admins: admin_vec,
+            offload_recipient,
+            auth_contract,
+            ft_wrapper_contract,
+            omni_locker_contract: LazyOption::new(b"omni_locker".to_vec(), Some(env::current_account_id())),
+            chain_mpc_mapping: LookupMap::new(b"chain_mpc".to_vec()),
+            sponsor_amount: 10_000_000_000_000_000_000_000,
+            sponsor_gas: 100_000_000_000_000,
+            cross_contract_gas: 100_000_000_000_000,
+            chunk_size: 10,
+            paused: false,
+            version: "1.0".to_string(),
+            migration_version: 0,
+            min_balance: 10_000_000_000_000_000_000_000_000,
+            max_balance: 1_000_000_000_000_000_000_000_000_000,
+            base_fee: 1_000_000_000_000_000_000_000,
+            transfer_nonces: LookupMap::new(b"nonces".to_vec()),
+        }
+    }
+
+    pub fn is_admin(&self, account_id: &AccountId) -> bool {
+        self.admins.iter().any(|admin| admin == account_id)
+    }
+
+    pub fn get_next_nonce(&mut self, chain: &str) -> u64 {
+        let nonce = self.transfer_nonces.get(chain).copied().unwrap_or(0);
+        self.transfer_nonces.insert(chain.to_string(), nonce + 1);
+        nonce
     }
 }

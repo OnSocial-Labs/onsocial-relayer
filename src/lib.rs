@@ -1,8 +1,8 @@
-use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, ext_contract};
+use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, ext_contract, Gas};
 use near_sdk::json_types::U128;
 use near_sdk::{borsh, PanicOnDefault};
 use crate::state::{Relayer, RelayerV1};
-use crate::types::SignedDelegateAction;
+use crate::types::{SignedDelegateAction, Action};
 use crate::errors::RelayerError;
 use crate::events::RelayerEvent;
 
@@ -13,13 +13,36 @@ mod state;
 mod admin;
 mod relay;
 mod sponsor;
-mod gas_pool;
+mod balance;
 
 #[ext_contract(ext_self)]
 pub trait SelfCallback {
-    fn refund_gas_callback(&mut self, initial_cost: u128);
     fn handle_mpc_signature(&mut self, chain: String, request_id: u64, result: Vec<u8>);
     fn handle_bridge_result(&mut self, sender_id: AccountId, action_type: String, result: Vec<u8>);
+    fn handle_bridge_transfer_result(&mut self, sender_id: AccountId, token: String, amount: U128, destination_chain: String, recipient: String, signature: Vec<u8>);
+    #[handle_result]
+    fn handle_auth_result(&mut self, sender_id: AccountId, signed_delegate: SignedDelegateAction, is_authorized: bool) -> Result<Promise, RelayerError>;
+    fn handle_registration(&mut self, account_id: AccountId, token: String, is_sender: bool, is_registered: bool) -> Promise;
+}
+
+#[ext_contract(ext_auth)]
+pub trait AuthContract {
+    fn is_authorized(&self, account_id: AccountId, public_key: PublicKey, signatures: Option<Vec<Vec<u8>>>) -> bool;
+    fn register_key(&mut self, account_id: AccountId, public_key: PublicKey, expiration_days: Option<u32>, is_multi_sig: bool, multi_sig_threshold: Option<u32>);
+    fn remove_key(&mut self, account_id: AccountId, public_key: PublicKey);
+}
+
+#[ext_contract(ext_ft_wrapper)]
+pub trait FtWrapperContract {
+    fn storage_deposit(&mut self, token: String, account_id: AccountId, deposit: U128);
+    fn ft_transfer(&mut self, token: String, receiver_id: AccountId, amount: U128, memo: Option<String>);
+    fn ft_balance_of(&self, token: String, account_id: AccountId) -> U128;
+    fn is_registered(&self, token: String, account_id: AccountId) -> bool;
+}
+
+#[ext_contract(ext_omi_locker)]
+pub trait OmniLocker {
+    fn lock(&mut self, token: String, amount: U128, destination_chain: String, recipient: String);
 }
 
 #[near(contract_state)]
@@ -31,29 +54,20 @@ pub struct OnSocialRelayer {
 #[near]
 impl OnSocialRelayer {
     #[init]
-    pub fn new(admins: Vec<AccountId>, initial_auth_account: AccountId, initial_auth_key: String, offload_recipient: AccountId) -> Self {
-        let initial_auth_key: PublicKey = initial_auth_key.parse().expect("Invalid public key");
+    pub fn new(
+        admins: Vec<AccountId>,
+        offload_recipient: AccountId,
+        auth_contract: AccountId,
+        ft_wrapper_contract: AccountId,
+    ) -> Self {
         Self {
-            relayer: Relayer::new(admins, initial_auth_account, initial_auth_key, offload_recipient),
+            relayer: Relayer::new(admins, offload_recipient, auth_contract, ft_wrapper_contract),
         }
     }
 
     #[payable]
     pub fn deposit(&mut self) {
-        let deposit = env::attached_deposit().as_yoctonear();
-        self.relayer.gas_pool += deposit;
-        if self.relayer.gas_pool > self.relayer.max_gas_pool {
-            let excess = self.relayer.gas_pool - self.relayer.max_gas_pool;
-            self.relayer.gas_pool = self.relayer.max_gas_pool;
-            Promise::new(self.relayer.offload_recipient.clone())
-                .transfer(NearToken::from_yoctonear(excess));
-        }
-    }
-
-    #[payable]
-    #[handle_result]
-    pub fn deposit_gas_pool(&mut self) -> Result<(), RelayerError> {
-        gas_pool::deposit_gas_pool(&mut self.relayer)
+        balance::deposit(&mut self.relayer).expect("Deposit failed");
     }
 
     #[handle_result]
@@ -74,13 +88,13 @@ impl OnSocialRelayer {
     #[handle_result]
     pub fn sponsor_account(&mut self, #[serializer(borsh)] args: Vec<u8>) -> Result<Promise, RelayerError> {
         env::log_str(&format!("Raw args: {:?}", args));
-        let (new_account_id, public_key): (AccountId, PublicKey) = borsh::from_slice(&args)
+        let (new_account_id, public_key, is_multi_sig, multi_sig_threshold): (AccountId, PublicKey, bool, Option<u32>) = borsh::from_slice(&args)
             .map_err(|e| {
                 env::log_str(&format!("Deserialization failed: {:?}", e));
                 RelayerError::InvalidNonce
             })?;
         env::log_str(&format!("Deserialized: {} {:?}", new_account_id, public_key));
-        sponsor::sponsor_account(&mut self.relayer, new_account_id, public_key)
+        sponsor::sponsor_account_with_registrar(&mut self.relayer, new_account_id, public_key, is_multi_sig, multi_sig_threshold)
     }
 
     #[handle_result]
@@ -89,13 +103,13 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
-    pub fn add_auth_account(&mut self, auth_account: AccountId, auth_public_key: PublicKey) -> Result<(), RelayerError> {
-        admin::add_auth_account(&mut self.relayer, auth_account, auth_public_key)
+    pub fn register_existing_account(&mut self, account_id: AccountId, public_key: PublicKey, expiration_days: Option<u32>, is_multi_sig: bool, multi_sig_threshold: Option<u32>) -> Result<(), RelayerError> {
+        admin::register_existing_account(&mut self.relayer, account_id, public_key, expiration_days, is_multi_sig, multi_sig_threshold)
     }
 
     #[handle_result]
-    pub fn remove_auth_account(&mut self, auth_account: AccountId) -> Result<(), RelayerError> {
-        admin::remove_auth_account(&mut self.relayer, auth_account)
+    pub fn remove_key(&mut self, account_id: AccountId, public_key: PublicKey) -> Result<(), RelayerError> {
+        admin::remove_key(&mut self.relayer, account_id, public_key)
     }
 
     #[handle_result]
@@ -119,13 +133,18 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
-    pub fn set_max_gas_pool(&mut self, new_max: U128) -> Result<(), RelayerError> {
-        admin::set_max_gas_pool(&mut self.relayer, new_max.0)
+    pub fn set_sponsor_gas(&mut self, new_gas: u64) -> Result<(), RelayerError> {
+        admin::set_sponsor_gas(&mut self.relayer, new_gas)
     }
 
     #[handle_result]
-    pub fn set_min_gas_pool(&mut self, new_min: U128) -> Result<(), RelayerError> {
-        admin::set_min_gas_pool(&mut self.relayer, new_min.0)
+    pub fn set_cross_contract_gas(&mut self, new_gas: u64) -> Result<(), RelayerError> {
+        admin::set_cross_contract_gas(&mut self.relayer, new_gas)
+    }
+
+    #[handle_result]
+    pub fn set_omni_locker_contract(&mut self, new_locker_contract: AccountId) -> Result<(), RelayerError> {
+        admin::set_omni_locker_contract(&mut self.relayer, new_locker_contract)
     }
 
     #[handle_result]
@@ -144,23 +163,18 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
-    pub fn set_max_gas(&mut self, new_max: U128) -> Result<(), RelayerError> {
-        admin::set_max_gas(&mut self.relayer, new_max.0)
+    pub fn set_auth_contract(&mut self, new_auth_contract: AccountId) -> Result<(), RelayerError> {
+        admin::set_auth_contract(&mut self.relayer, new_auth_contract)
     }
 
     #[handle_result]
-    pub fn set_mpc_sign_gas(&mut self, new_gas: U128) -> Result<(), RelayerError> {
-        admin::set_mpc_sign_gas(&mut self.relayer, new_gas.0)
+    pub fn set_ft_wrapper_contract(&mut self, new_ft_wrapper_contract: AccountId) -> Result<(), RelayerError> {
+        admin::set_ft_wrapper_contract(&mut self.relayer, new_ft_wrapper_contract)
     }
 
     #[handle_result]
-    pub fn set_callback_gas(&mut self, new_gas: U128) -> Result<(), RelayerError> {
-        admin::set_callback_gas(&mut self.relayer, new_gas.0)
-    }
-
-    #[handle_result]
-    pub fn set_registrar(&mut self, new_registrar: AccountId) -> Result<(), RelayerError> {
-        admin::set_registrar(&mut self.relayer, new_registrar)
+    pub fn set_base_fee(&mut self, new_fee: U128) -> Result<(), RelayerError> {
+        admin::set_base_fee(&mut self.relayer, new_fee.0)
     }
 
     #[handle_result]
@@ -174,45 +188,62 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
-    pub fn migrate(&mut self) -> Result<(), RelayerError> {
-        admin::migrate(&mut self.relayer)
+    pub fn migrate(&mut self, target_version: u64, require_pause: bool) -> Result<(), RelayerError> {
+        admin::migrate(&mut self.relayer, target_version, require_pause)
     }
 
     #[handle_result]
-    pub fn set_gas_price(&mut self, new_gas_price: U128) -> Result<(), RelayerError> {
-        admin::set_gas_price(&mut self.relayer, new_gas_price.0)
+    pub fn set_min_balance(&mut self, new_min: U128) -> Result<(), RelayerError> {
+        admin::set_min_balance(&mut self.relayer, new_min.0)
     }
 
-    pub fn get_gas_pool(&self) -> U128 {
-        U128(self.relayer.gas_pool)
+    #[handle_result]
+    pub fn set_max_balance(&mut self, new_max: U128) -> Result<(), RelayerError> {
+        admin::set_max_balance(&mut self.relayer, new_max.0)
     }
 
-    pub fn get_min_gas_pool(&self) -> U128 {
-        U128(self.relayer.min_gas_pool)
+    pub fn get_balance(&self) -> U128 {
+        U128(env::account_balance().as_yoctonear())
+    }
+
+    pub fn get_min_balance(&self) -> U128 {
+        U128(self.relayer.min_balance)
+    }
+
+    pub fn get_max_balance(&self) -> U128 {
+        U128(self.relayer.max_balance)
     }
 
     pub fn get_sponsor_amount(&self) -> U128 {
         U128(self.relayer.sponsor_amount)
     }
 
+    pub fn get_sponsor_gas(&self) -> u64 {
+        self.relayer.sponsor_gas
+    }
+
+    pub fn get_cross_contract_gas(&self) -> u64 {
+        self.relayer.cross_contract_gas
+    }
+
+    pub fn get_omni_locker_contract(&self) -> AccountId {
+        self.relayer.omni_locker_contract.get().clone().map(|x| x.clone()).unwrap_or_else(|| env::current_account_id())
+    }
+
     pub fn get_chunk_size(&self) -> usize {
         self.relayer.chunk_size
     }
 
-    pub fn get_max_gas(&self) -> U128 {
-        U128(self.relayer.max_gas.as_gas() as u128)
+    pub fn get_auth_contract(&self) -> AccountId {
+        self.relayer.auth_contract.clone()
     }
 
-    pub fn get_mpc_sign_gas(&self) -> U128 {
-        U128(self.relayer.mpc_sign_gas.as_gas() as u128)
+    pub fn get_ft_wrapper_contract(&self) -> AccountId {
+        self.relayer.ft_wrapper_contract.clone()
     }
 
-    pub fn get_callback_gas(&self) -> U128 {
-        U128(self.relayer.callback_gas.as_gas() as u128)
-    }
-
-    pub fn get_registrar(&self) -> AccountId {
-        self.relayer.registrar.clone()
+    pub fn get_base_fee(&self) -> U128 {
+        U128(self.relayer.base_fee)
     }
 
     pub fn is_paused(&self) -> bool {
@@ -222,34 +253,10 @@ impl OnSocialRelayer {
     pub fn get_version(&self) -> String {
         self.relayer.version.clone()
     }
-
-    pub fn is_authorized(&self, account_id: AccountId) -> bool {
-        self.relayer.auth_accounts.contains_key(&account_id)
-    }
-
-    pub fn get_gas_price(&self) -> U128 {
-        U128(self.relayer.gas_price)
-    }
 }
 
 #[near]
 impl OnSocialRelayer {
-    #[private]
-    pub fn refund_gas_callback(&mut self, initial_cost: u128) {
-        let used_gas = env::used_gas().as_tgas() as u128;
-        let gas_price = self.relayer.gas_price;
-        let actual_cost = used_gas * gas_price;
-        let refund = initial_cost.saturating_sub(actual_cost);
-        self.relayer.gas_pool += refund;
-
-        if self.relayer.gas_pool > self.relayer.max_gas_pool {
-            let excess = self.relayer.gas_pool - self.relayer.max_gas_pool;
-            self.relayer.gas_pool = self.relayer.max_gas_pool;
-            Promise::new(self.relayer.offload_recipient.clone())
-                .transfer(NearToken::from_yoctonear(excess));
-        }
-    }
-
     #[private]
     pub fn handle_mpc_signature(&mut self, chain: String, request_id: u64, result: Vec<u8>) {
         RelayerEvent::CrossChainSignatureResult { chain, request_id, result }.emit();
@@ -260,13 +267,78 @@ impl OnSocialRelayer {
         RelayerEvent::BridgeResult { sender_id, action_type, result }.emit();
     }
 
+    #[private]
+    pub fn handle_bridge_transfer_result(&mut self, sender_id: AccountId, token: String, amount: U128, destination_chain: String, recipient: String, signature: Vec<u8>) {
+        RelayerEvent::BridgeTransferCompleted {
+            token,
+            amount,
+            destination_chain,
+            recipient,
+            sender: sender_id,
+            signature,
+        }.emit();
+    }
+
+    #[private]
+    #[handle_result]
+    pub fn handle_auth_result(&mut self, sender_id: AccountId, signed_delegate: SignedDelegateAction, #[callback_unwrap] is_authorized: bool) -> Result<Promise, RelayerError> {
+        if !is_authorized {
+            return Err(RelayerError::Unauthorized);
+        }
+
+        let tx_hash = env::sha256(&borsh::to_vec(&signed_delegate.delegate_action).map_err(|_| RelayerError::InvalidNonce)?);
+        relay::verify_signature(&signed_delegate, &tx_hash)?;
+
+        let delegate = signed_delegate.delegate_action;
+        let action = delegate.actions.first().unwrap();
+        let request_id = env::block_timestamp();
+
+        let promise = relay::execute_action(&mut self.relayer, action, &sender_id, action.type_name(), Some(request_id))?;
+
+        let promise = match action {
+            Action::ChainSignatureRequest { target_chain, .. } => {
+                promise.then(
+                    ext_self::ext(env::current_account_id())
+                        .with_static_gas(Gas::from_tgas(self.relayer.cross_contract_gas))
+                        .handle_mpc_signature(target_chain.clone(), request_id, Vec::new())
+                )
+            }
+            Action::BridgeTransfer { token, amount, destination_chain, recipient, .. } => {
+                promise.then(
+                    ext_self::ext(env::current_account_id())
+                        .with_static_gas(Gas::from_tgas(self.relayer.cross_contract_gas))
+                        .handle_bridge_transfer_result(sender_id.clone(), token.clone(), *amount, destination_chain.clone(), recipient.clone(), Vec::new())
+                )
+            }
+            _ => promise.then(
+                ext_self::ext(env::current_account_id())
+                    .with_static_gas(Gas::from_tgas(self.relayer.cross_contract_gas))
+                    .handle_bridge_result(sender_id.clone(), action.type_name().to_string(), Vec::new())
+            ),
+        };
+
+        Ok(promise)
+    }
+
+    #[private]
+    pub fn handle_registration(&mut self, account_id: AccountId, token: String, _is_sender: bool, #[callback_unwrap] is_registered: bool) -> Promise {
+        if !is_registered {
+            ext_ft_wrapper::ext(self.relayer.ft_wrapper_contract.clone())
+                .with_static_gas(Gas::from_tgas(self.relayer.cross_contract_gas))
+                .with_attached_deposit(NearToken::from_yoctonear(1_250_000_000_000_000_000_000))
+                .storage_deposit(token, account_id, U128(1_250_000_000_000_000_000_000))
+        } else {
+            Promise::new(env::current_account_id())
+        }
+    }
+
     #[init]
     #[private]
     pub fn migrate_state() -> Self {
         let old_state: RelayerV1 = env::state_read().expect("Failed to read old state");
-        Self {
-            relayer: Relayer::from(old_state),
-        }
+        let mut relayer = Relayer::from(old_state);
+        relayer.migration_version = 1;
+        Self { relayer }
     }
 }
 

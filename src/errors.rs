@@ -4,7 +4,7 @@ use near_sdk::borsh::{BorshSerialize, BorshDeserialize};
 #[derive(Debug, PartialEq, BorshSerialize, BorshDeserialize)]
 pub enum RelayerError {
     Unauthorized,
-    InsufficientGasPool,
+    InsufficientBalance,
     InvalidNonce,
     ExpiredTransaction,
     ContractPaused,
@@ -18,6 +18,10 @@ pub enum RelayerError {
     InvalidSignature,
     InvalidRequestId,
     InvalidChainId,
+    AccountTaken,
+    RateLimitHit,
+    KeyExpired,
+    InsufficientDeposit,
 }
 
 impl FunctionError for RelayerError {

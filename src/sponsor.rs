@@ -1,71 +1,95 @@
-use near_sdk::{env, Promise, PublicKey, AccountId, NearToken, Gas};
-use crate::state::Relayer;
+use near_sdk::{env, Promise, AccountId, PublicKey, NearToken, Gas};
+use crate::{state::Relayer, ext_auth};
 use crate::errors::RelayerError;
-use crate::relay::{ext_self, verify_signature};
-use crate::types::{Action, SignedDelegateAction};
+use crate::events::RelayerEvent;
+use crate::types::SignedDelegateAction;
+use crate::relay;
+use near_sdk::borsh::to_vec;
 
-pub fn sponsor_account(relayer: &mut Relayer, new_account_id: AccountId, public_key: PublicKey) -> Result<Promise, RelayerError> {
-    let caller = env::predecessor_account_id();
-    if relayer.paused || !relayer.auth_accounts.contains_key(&caller) {
-        return Err(if relayer.paused { RelayerError::ContractPaused } else { RelayerError::Unauthorized });
-    }
-    sponsor_account_inner(relayer, new_account_id, public_key)
-}
-
-pub fn sponsor_account_signed(relayer: &mut Relayer, signed_delegate: SignedDelegateAction) -> Result<Promise, RelayerError> {
+pub fn sponsor_account_with_registrar(
+    relayer: &mut Relayer,
+    new_account_id: AccountId,
+    public_key: PublicKey,
+    is_multi_sig: bool,
+    multi_sig_threshold: Option<u32>,
+) -> Result<Promise, RelayerError> {
     if relayer.paused {
         return Err(RelayerError::ContractPaused);
     }
-    let delegate = &signed_delegate.delegate_action;
-    let sender_id = &delegate.sender_id;
 
-    let auth_key = relayer.auth_accounts.get(sender_id).ok_or(RelayerError::Unauthorized)?;
-    if *auth_key != signed_delegate.public_key {
-        return Err(RelayerError::Unauthorized);
+    let balance = env::account_balance();
+    if balance.as_yoctonear() < relayer.min_balance {
+        RelayerEvent::LowBalance { balance: balance.as_yoctonear() }.emit();
+        return Err(RelayerError::InsufficientBalance);
     }
-    verify_signature(&signed_delegate)?;
 
-    if delegate.actions.len() != 1 {
-        return Err(RelayerError::InvalidNonce);
-    }
-    match &delegate.actions[0] {
-        Action::AddKey { public_key, .. } => {
-            let new_account_id = delegate.receiver_id.clone();
-            sponsor_account_inner(relayer, new_account_id, public_key.clone())
+    let is_mainnet = env::current_account_id().to_string().ends_with(".near");
+    let registrar = if is_mainnet {
+        "registrar.near".parse().unwrap()
+    } else {
+        "testnet".parse().unwrap()
+    };
+
+    let account_id_str = new_account_id.to_string();
+    let account_name = account_id_str
+        .split('.')
+        .next()
+        .ok_or(RelayerError::InvalidAccountId)?;
+    if is_mainnet {
+        let len = account_name.len();
+        if len < 3 || len > 16 {
+            return Err(RelayerError::InvalidAccountId);
         }
-        _ => Err(RelayerError::InvalidNonce),
+    } else if !account_id_str.ends_with(".testnet") {
+        return Err(RelayerError::InvalidAccountId);
     }
+
+    let (funding_amount, creation_deposit) = if is_mainnet {
+        let len = account_name.len();
+        let base_funding = if len >= 13 {
+            250_000_000_000_000_000_000_000
+        } else {
+            500_000_000_000_000_000_000_000
+        };
+        (base_funding, base_funding / 10)
+    } else {
+        (
+            100_000_000_000_000_000_000_000,
+            1_820_000_000_000_000_000_000,
+        )
+    };
+
+    let args = to_vec(&(
+        new_account_id.to_string(),
+        public_key.clone()
+    )).map_err(|_| RelayerError::InvalidAccountId)?;
+
+    let promise = Promise::new(registrar)
+        .function_call(
+            "create_account".to_string(),
+            args,
+            NearToken::from_yoctonear(creation_deposit),
+            Gas::from_tgas(relayer.cross_contract_gas),
+        )
+        .then(
+            Promise::new(new_account_id.clone())
+                .add_full_access_key(public_key.clone())
+                .transfer(NearToken::from_yoctonear(funding_amount)),
+        )
+        .then(
+            ext_auth::ext(relayer.auth_contract.clone())
+                .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
+                .register_key(new_account_id.clone(), public_key, Some(30), is_multi_sig, multi_sig_threshold)
+        );
+
+    RelayerEvent::AccountSponsored { account_id: new_account_id.clone() }.emit();
+
+    Ok(promise)
 }
 
-fn sponsor_account_inner(relayer: &mut Relayer, new_account_id: AccountId, public_key: PublicKey) -> Result<Promise, RelayerError> {
-    if relayer.gas_pool < relayer.min_gas_pool + relayer.sponsor_amount {
-        return Err(RelayerError::InsufficientGasPool);
-    }
-
-    // Use relayer.max_gas and relayer.callback_gas directly, ensuring total <= 300 TGas
-    let prepaid_gas = env::prepaid_gas().as_gas();
-    let max_call_gas = relayer.max_gas;
-    let max_callback_gas = relayer.callback_gas;
-    let total_required_gas = max_call_gas.as_gas() + max_callback_gas.as_gas();
-    let max_allowed_gas = Gas::from_tgas(300).as_gas();
-
-    if total_required_gas > max_allowed_gas {
-        return Err(RelayerError::InsufficientGasPool); // Total exceeds 300 TGas
-    }
-    if prepaid_gas < total_required_gas {
-        return Err(RelayerError::InsufficientGasPool); // Prepaid gas insufficient
-    }
-
-    relayer.gas_pool -= relayer.sponsor_amount;
-
-    let promise = Promise::new(new_account_id.clone())
-        .create_account()
-        .add_full_access_key(public_key)
-        .transfer(NearToken::from_yoctonear(relayer.sponsor_amount));
-
-    Ok(promise.then(
-        ext_self::ext(env::current_account_id())
-            .with_static_gas(max_callback_gas)
-            .refund_gas_callback(relayer.sponsor_amount)
-    ))
+pub fn sponsor_account_signed(
+    relayer: &mut Relayer,
+    signed_delegate: SignedDelegateAction,
+) -> Result<Promise, RelayerError> {
+    relay::relay_meta_transaction(relayer, signed_delegate)
 }

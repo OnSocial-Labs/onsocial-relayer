@@ -1,12 +1,40 @@
-use near_sdk::{AccountId, near};
+use near_sdk::{near, AccountId};
+use near_sdk::json_types::U128;
 
 #[near(event_json(standard = "nep297"))]
-#[derive(Debug)]
 pub enum RelayerEvent {
     #[event_version("1.0.0")]
-    AuthAdded { auth_account: AccountId },
+    LowBalance { balance: u128 },
     #[event_version("1.0.0")]
-    AuthRemoved { auth_account: AccountId },
+    AccountSponsored { account_id: AccountId },
+    #[event_version("1.0.0")]
+    AuthAdded { auth_account: AccountId, key_hash: String },
+    #[event_version("1.0.0")]
+    AuthRemoved { auth_account: AccountId, key_hash: String },
+    #[event_version("1.0.0")]
+    CrossChainSignatureResult { chain: String, request_id: u64, result: Vec<u8> },
+    #[event_version("1.0.0")]
+    BridgeResult { sender_id: AccountId, action_type: String, result: Vec<u8> },
+    #[event_version("1.0.0")]
+    BridgeTransferInitiated { 
+        token: String, 
+        amount: U128, 
+        destination_chain: String, 
+        recipient: String, 
+        sender: AccountId, 
+        nonce: u64 
+    },
+    #[event_version("1.0.0")]
+    BridgeTransferCompleted { 
+        token: String, 
+        amount: U128, 
+        destination_chain: String, 
+        recipient: String, 
+        sender: AccountId, 
+        signature: Vec<u8> 
+    },
+    #[event_version("1.0.0")]
+    OffloadRecipientUpdated { new_recipient: AccountId },
     #[event_version("1.0.0")]
     AdminAdded { admin_account: AccountId },
     #[event_version("1.0.0")]
@@ -14,13 +42,11 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     SponsorAmountUpdated { new_amount: u128 },
     #[event_version("1.0.0")]
-    OffloadRecipientUpdated { new_recipient: AccountId },
+    SponsorGasUpdated { new_gas: u64 },
     #[event_version("1.0.0")]
-    MaxGasPoolUpdated { new_max: u128 },
+    CrossContractGasUpdated { new_gas: u64 },
     #[event_version("1.0.0")]
-    MinGasPoolUpdated { new_min: u128 },
-    #[event_version("1.0.0")]
-    LowGasPool { remaining: u128 },
+    OmniLockerContractUpdated { new_locker_contract: AccountId },
     #[event_version("1.0.0")]
     ChainMpcMappingAdded { chain: String, mpc_contract: AccountId },
     #[event_version("1.0.0")]
@@ -28,23 +54,19 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     ChunkSizeUpdated { new_size: usize },
     #[event_version("1.0.0")]
-    CrossChainSignatureResult { chain: String, request_id: u64, result: Vec<u8> },
+    AuthContractUpdated { new_auth_contract: AccountId },
     #[event_version("1.0.0")]
-    BridgeResult { sender_id: AccountId, action_type: String, result: Vec<u8> },
-    #[event_version("1.0.0")]
-    MaxGasUpdated { new_max: u64 },
-    #[event_version("1.0.0")]
-    MpcSignGasUpdated { new_gas: u64 },
-    #[event_version("1.0.0")]
-    CallbackGasUpdated { new_gas: u64 },
+    FtWrapperContractUpdated { new_ft_wrapper_contract: AccountId },
     #[event_version("1.0.0")]
     ContractPaused,
     #[event_version("1.0.0")]
     ContractUnpaused,
     #[event_version("1.0.0")]
-    MigrationCompleted { from_version: String, to_version: String },
+    MinBalanceUpdated { new_min: u128 },
     #[event_version("1.0.0")]
-    RegistrarUpdated { new_registrar: AccountId },
+    MaxBalanceUpdated { new_max: u128 },
     #[event_version("1.0.0")]
-    GasPriceUpdated { new_gas_price: u128 }, // Added
+    BaseFeeUpdated { new_fee: u128 },
+    #[event_version("1.0.0")]
+    MigrationCompleted { from_version: u64, to_version: u64 },
 }

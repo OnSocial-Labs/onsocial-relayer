@@ -1,26 +1,83 @@
-use near_sdk::env;
-use near_sdk::{AccountId, PublicKey, Gas};
-use crate::state::Relayer;
+use near_sdk::{env, AccountId, PublicKey, Gas};
+use crate::{ext_auth, state::Relayer};
 use crate::errors::RelayerError;
 use crate::events::RelayerEvent;
 
-pub fn add_auth_account(relayer: &mut Relayer, auth_account: AccountId, auth_public_key: PublicKey) -> Result<(), RelayerError> {
+pub fn register_existing_account(
+    relayer: &mut Relayer,
+    account_id: AccountId,
+    public_key: PublicKey,
+    expiration_days: Option<u32>,
+    is_multi_sig: bool,
+    multi_sig_threshold: Option<u32>,
+) -> Result<(), RelayerError> {
+    if relayer.paused {
+        return Err(RelayerError::ContractPaused);
+    }
+
     let caller = env::predecessor_account_id();
-    if !relayer.is_admin(&caller) {
+    if caller != account_id {
         return Err(RelayerError::Unauthorized);
     }
-    relayer.auth_accounts.insert(auth_account.clone(), auth_public_key);
-    RelayerEvent::AuthAdded { auth_account }.emit();
+
+    if public_key.as_bytes().len() != 33 || public_key.as_bytes()[0] != 0 {
+        return Err(RelayerError::InvalidSignature);
+    }
+
+    ext_auth::ext(relayer.auth_contract.clone())
+        .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
+        .register_key(
+            account_id.clone(),
+            public_key.clone(),
+            expiration_days,
+            is_multi_sig,
+            multi_sig_threshold,
+        );
+
+    let key_hash = hex::encode(env::sha256(&public_key.as_bytes()));
+    RelayerEvent::AuthAdded { auth_account: account_id, key_hash }.emit();
     Ok(())
 }
 
-pub fn remove_auth_account(relayer: &mut Relayer, auth_account: AccountId) -> Result<(), RelayerError> {
+pub fn remove_key(relayer: &mut Relayer, account_id: AccountId, public_key: PublicKey) -> Result<(), RelayerError> {
+    if relayer.paused {
+        return Err(RelayerError::ContractPaused);
+    }
+
+    let caller = env::predecessor_account_id();
+    if caller != account_id {
+        return Err(RelayerError::Unauthorized);
+    }
+
+    ext_auth::ext(relayer.auth_contract.clone())
+        .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
+        .remove_key(account_id.clone(), public_key.clone());
+
+    let key_hash = hex::encode(env::sha256(&public_key.as_bytes()));
+    RelayerEvent::AuthRemoved { auth_account: account_id, key_hash }.emit();
+    Ok(())
+}
+
+pub fn set_cross_contract_gas(relayer: &mut Relayer, new_gas: u64) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    relayer.auth_accounts.remove(&auth_account);
-    RelayerEvent::AuthRemoved { auth_account }.emit();
+    if new_gas < 10_000_000_000_000 || new_gas > 300_000_000_000_000 {
+        return Err(RelayerError::AmountTooLow);
+    }
+    relayer.cross_contract_gas = new_gas;
+    RelayerEvent::CrossContractGasUpdated { new_gas }.emit();
+    Ok(())
+}
+
+pub fn set_omni_locker_contract(relayer: &mut Relayer, new_locker_contract: AccountId) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    relayer.omni_locker_contract.set(Some(new_locker_contract.clone()));
+    RelayerEvent::OmniLockerContractUpdated { new_locker_contract }.emit();
     Ok(())
 }
 
@@ -39,7 +96,7 @@ pub fn add_admin(relayer: &mut Relayer, new_admin: AccountId) -> Result<(), Rela
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if !relayer.admins.contains(&new_admin) {
+    if !relayer.admins.iter().any(|admin| admin == &new_admin) {
         relayer.admins.push(new_admin.clone());
         RelayerEvent::AdminAdded { admin_account: new_admin }.emit();
     }
@@ -55,7 +112,7 @@ pub fn remove_admin(relayer: &mut Relayer, admin_to_remove: AccountId) -> Result
         if relayer.admins.len() <= 1 {
             return Err(RelayerError::LastAdmin);
         }
-        relayer.admins.swap_remove(index);
+        relayer.admins.swap_remove(index.try_into().unwrap());
         RelayerEvent::AdminRemoved { admin_account: admin_to_remove }.emit();
     }
     Ok(())
@@ -66,7 +123,7 @@ pub fn set_sponsor_amount(relayer: &mut Relayer, new_amount: u128) -> Result<(),
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_amount < 10_000_000_000_000_000_000_000 { // e.g., 0.01 NEAR
+    if new_amount < 10_000_000_000_000_000_000_000 {
         return Err(RelayerError::AmountTooLow);
     }
     relayer.sponsor_amount = new_amount;
@@ -74,29 +131,29 @@ pub fn set_sponsor_amount(relayer: &mut Relayer, new_amount: u128) -> Result<(),
     Ok(())
 }
 
-pub fn set_max_gas_pool(relayer: &mut Relayer, new_max: u128) -> Result<(), RelayerError> {
+pub fn set_sponsor_gas(relayer: &mut Relayer, new_gas: u64) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_max < relayer.min_gas_pool {
+    if new_gas < 50_000_000_000_000 || new_gas > 300_000_000_000_000 {
         return Err(RelayerError::AmountTooLow);
     }
-    relayer.max_gas_pool = new_max;
-    RelayerEvent::MaxGasPoolUpdated { new_max }.emit();
+    relayer.sponsor_gas = new_gas;
+    RelayerEvent::SponsorGasUpdated { new_gas }.emit();
     Ok(())
 }
 
-pub fn set_min_gas_pool(relayer: &mut Relayer, new_min: u128) -> Result<(), RelayerError> {
+pub fn set_chunk_size(relayer: &mut Relayer, new_size: usize) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_min > relayer.max_gas_pool {
+    if new_size < 1 || new_size > 100 {
         return Err(RelayerError::AmountTooLow);
     }
-    relayer.min_gas_pool = new_min;
-    RelayerEvent::MinGasPoolUpdated { new_min }.emit();
+    relayer.chunk_size = new_size;
+    RelayerEvent::ChunkSizeUpdated { new_size }.emit();
     Ok(())
 }
 
@@ -120,73 +177,23 @@ pub fn remove_chain_mpc_mapping(relayer: &mut Relayer, chain: String) -> Result<
     Ok(())
 }
 
-pub fn set_chunk_size(relayer: &mut Relayer, new_size: usize) -> Result<(), RelayerError> {
+pub fn set_auth_contract(relayer: &mut Relayer, new_auth_contract: AccountId) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_size < 1 || new_size > 100 {
-        return Err(RelayerError::AmountTooLow);
-    }
-    relayer.chunk_size = new_size;
-    RelayerEvent::ChunkSizeUpdated { new_size }.emit();
+    relayer.auth_contract = new_auth_contract.clone();
+    RelayerEvent::AuthContractUpdated { new_auth_contract }.emit();
     Ok(())
 }
 
-pub fn set_max_gas(relayer: &mut Relayer, new_max: u128) -> Result<(), RelayerError> {
+pub fn set_ft_wrapper_contract(relayer: &mut Relayer, new_ft_wrapper_contract: AccountId) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_max < Gas::from_tgas(50).as_gas() as u128 {
-        return Err(RelayerError::AmountTooLow);
-    }
-    let total_gas = new_max + (relayer.callback_gas.as_gas() as u128);
-    if total_gas > Gas::from_tgas(300).as_gas() as u128 {
-        return Err(RelayerError::AmountTooHigh);
-    }
-    relayer.max_gas = Gas::from_gas(new_max as u64);
-    RelayerEvent::MaxGasUpdated { new_max: relayer.max_gas.as_tgas() }.emit();
-    Ok(())
-}
-
-pub fn set_mpc_sign_gas(relayer: &mut Relayer, new_gas: u128) -> Result<(), RelayerError> {
-    let caller = env::predecessor_account_id();
-    if !relayer.is_admin(&caller) {
-        return Err(RelayerError::Unauthorized);
-    }
-    if new_gas < Gas::from_tgas(20).as_gas() as u128 {
-        return Err(RelayerError::AmountTooLow);
-    }
-    relayer.mpc_sign_gas = Gas::from_gas(new_gas as u64);
-    RelayerEvent::MpcSignGasUpdated { new_gas: relayer.mpc_sign_gas.as_tgas() }.emit();
-    Ok(())
-}
-
-pub fn set_callback_gas(relayer: &mut Relayer, new_gas: u128) -> Result<(), RelayerError> {
-    let caller = env::predecessor_account_id();
-    if !relayer.is_admin(&caller) {
-        return Err(RelayerError::Unauthorized);
-    }
-    if new_gas < Gas::from_tgas(5).as_gas() as u128 {
-        return Err(RelayerError::AmountTooLow);
-    }
-    let total_gas = (relayer.max_gas.as_gas() as u128) + new_gas;
-    if total_gas > Gas::from_tgas(300).as_gas() as u128 {
-        return Err(RelayerError::AmountTooHigh);
-    }
-    relayer.callback_gas = Gas::from_gas(new_gas as u64);
-    RelayerEvent::CallbackGasUpdated { new_gas: relayer.callback_gas.as_tgas() }.emit();
-    Ok(())
-}
-
-pub fn set_registrar(relayer: &mut Relayer, new_registrar: AccountId) -> Result<(), RelayerError> {
-    let caller = env::predecessor_account_id();
-    if !relayer.is_admin(&caller) {
-        return Err(RelayerError::Unauthorized);
-    }
-    relayer.registrar = new_registrar.clone();
-    RelayerEvent::RegistrarUpdated { new_registrar }.emit();
+    relayer.ft_wrapper_contract = new_ft_wrapper_contract.clone();
+    RelayerEvent::FtWrapperContractUpdated { new_ft_wrapper_contract }.emit();
     Ok(())
 }
 
@@ -216,38 +223,70 @@ pub fn unpause(relayer: &mut Relayer) -> Result<(), RelayerError> {
     Ok(())
 }
 
-pub fn migrate(relayer: &mut Relayer) -> Result<(), RelayerError> {
+pub fn migrate(relayer: &mut Relayer, target_version: u64, require_pause: bool) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if !relayer.paused {
+    if require_pause && !relayer.paused {
         return Err(RelayerError::ContractPaused);
     }
-
-    match relayer.version.as_str() {
-        "1.0" => {
-            relayer.version = "1.1".to_string();
-            RelayerEvent::MigrationCompleted { 
-                from_version: "1.0".to_string(), 
-                to_version: "1.1".to_string() 
-            }.emit();
-            Ok(())
-        }
-        "1.1" => Ok(()),
-        _ => Err(RelayerError::InvalidNonce),
+    if target_version <= relayer.migration_version {
+        return Err(RelayerError::InvalidNonce);
     }
+
+    let current = relayer.migration_version;
+    for version in (current + 1)..=target_version {
+        match version {
+            1 => {
+                relayer.version = "1.1".to_string();
+            }
+            _ => return Err(RelayerError::InvalidNonce),
+        }
+        relayer.migration_version = version;
+        RelayerEvent::MigrationCompleted { 
+            from_version: version - 1, 
+            to_version: version 
+        }.emit();
+    }
+    Ok(())
 }
 
-pub fn set_gas_price(relayer: &mut Relayer, new_gas_price: u128) -> Result<(), RelayerError> {
+pub fn set_min_balance(relayer: &mut Relayer, new_min: u128) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_gas_price < 50_000_000_000 { // Minimum 0.00005 Ⓝ/TGas
+    if new_min > relayer.max_balance {
         return Err(RelayerError::AmountTooLow);
     }
-    relayer.gas_price = new_gas_price;
-    RelayerEvent::GasPriceUpdated { new_gas_price }.emit();
+    relayer.min_balance = new_min;
+    RelayerEvent::MinBalanceUpdated { new_min }.emit();
+    Ok(())
+}
+
+pub fn set_max_balance(relayer: &mut Relayer, new_max: u128) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if new_max < relayer.min_balance {
+        return Err(RelayerError::AmountTooLow);
+    }
+    relayer.max_balance = new_max;
+    RelayerEvent::MaxBalanceUpdated { new_max }.emit();
+    Ok(())
+}
+
+pub fn set_base_fee(relayer: &mut Relayer, new_fee: u128) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    if new_fee < 100_000_000_000_000_000_000 {
+        return Err(RelayerError::AmountTooLow);
+    }
+    relayer.base_fee = new_fee;
+    RelayerEvent::BaseFeeUpdated { new_fee }.emit();
     Ok(())
 }
