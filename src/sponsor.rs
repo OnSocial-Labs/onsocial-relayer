@@ -44,19 +44,13 @@ pub fn sponsor_account_with_registrar(
         return Err(RelayerError::InvalidAccountId);
     }
 
-    let (funding_amount, creation_deposit) = if is_mainnet {
-        let len = account_name.len();
-        let base_funding = if len >= 13 {
-            250_000_000_000_000_000_000_000
-        } else {
-            500_000_000_000_000_000_000_000
-        };
-        (base_funding, base_funding / 10)
+    // Use configurable sponsor_amount with a minimum to cover storage staking (~0.001 NEAR) and usability (~0.03 NEAR)
+    let min_funding = 50_000_000_000_000_000_000_000; // 0.05 NEAR
+    let funding_amount = relayer.sponsor_amount.max(min_funding); // Use sponsor_amount, ensure minimum
+    let creation_deposit = if is_mainnet {
+        funding_amount / 10 // Proportional to funding_amount, e.g., 0.01 NEAR for 0.1 NEAR
     } else {
-        (
-            100_000_000_000_000_000_000_000,
-            1_820_000_000_000_000_000_000,
-        )
+        1_820_000_000_000_000_000_000 // 0.00182 NEAR for testnet
     };
 
     let args = to_vec(&(
