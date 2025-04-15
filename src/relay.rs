@@ -168,7 +168,6 @@ pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: 
                             )
                     }
                     Err(_) => {
-                        // Return a promise that will fail to maintain type consistency
                         Promise::new(env::current_account_id()).function_call(
                             "panic".to_string(),
                             borsh::to_vec(&RelayerError::InvalidNonce).unwrap_or_default(),
@@ -259,9 +258,17 @@ pub fn execute_action(
         }
         Action::BridgeTransfer { token, amount, destination_chain, recipient } => {
             let fee = relayer.base_fee;
-            if env::attached_deposit().as_yoctonear() < fee {
+            let attached_deposit = env::attached_deposit().as_yoctonear();
+            if attached_deposit < fee {
                 return Err(RelayerError::InsufficientDeposit);
             }
+
+            // Estimate locking and signing costs
+            let total_cost = 15_000_000_000_000; // 15 TGas for lock + sign
+            if fee < total_cost / 1_000_000_000_000 * 1_000_000_000_000_000_000_000 { // Convert TGas to yoctoNEAR (approx 1 TGas = 0.001 NEAR)
+                return Err(RelayerError::FeeTooLow);
+            }
+
             let nonce = relayer.get_next_nonce(destination_chain);
             let lock_promise = ext_omi_locker::ext(relayer.omni_locker_contract.get().clone().map(|x| x.clone()).unwrap_or_else(|| env::current_account_id()))
                 .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
@@ -289,6 +296,13 @@ pub fn execute_action(
                     NearToken::from_yoctonear(0),
                     Gas::from_tgas(relayer.cross_contract_gas)
                 );
+
+            // Transfer excess fee to offload_recipient
+            if attached_deposit > fee {
+                Promise::new(relayer.offload_recipient.clone())
+                    .transfer(NearToken::from_yoctonear(attached_deposit - fee));
+            }
+
             RelayerEvent::BridgeTransferInitiated {
                 token: token.clone(),
                 amount: *amount,
@@ -297,6 +311,12 @@ pub fn execute_action(
                 sender: sender_id.clone(),
                 nonce,
             }.emit();
+            RelayerEvent::FeeCharged { 
+                action: "BridgeTransfer".to_string(), 
+                fee: fee, 
+                sender: sender_id.clone() 
+            }.emit();
+            
             promise = lock_promise.then(sign_promise);
         }
     }

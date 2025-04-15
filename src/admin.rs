@@ -63,7 +63,7 @@ pub fn set_cross_contract_gas(relayer: &mut Relayer, new_gas: u64) -> Result<(),
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if new_gas < 10_000_000_000_000 || new_gas > 300_000_000_000_000 {
+    if new_gas < 15_000_000_000_000 || new_gas > 300_000_000_000_000 {
         return Err(RelayerError::AmountTooLow);
     }
     relayer.cross_contract_gas = new_gas;
@@ -197,6 +197,33 @@ pub fn set_ft_wrapper_contract(relayer: &mut Relayer, new_ft_wrapper_contract: A
     Ok(())
 }
 
+pub fn set_base_fee(relayer: &mut Relayer, new_fee: u128, signatures: Option<Vec<Vec<u8>>>) -> Result<(), RelayerError> {
+    let caller = env::predecessor_account_id();
+    if !relayer.is_admin(&caller) {
+        return Err(RelayerError::Unauthorized);
+    }
+    
+    // Require multi-signature approval for fee changes
+    if let Some(sigs) = signatures {
+        if sigs.len() < 2 {
+            return Err(RelayerError::InsufficientSignatures);
+        }
+        // TODO: Verify signatures against admin keys (requires AuthContract integration)
+    } else {
+        return Err(RelayerError::InsufficientSignatures);
+    }
+
+    // Minimum fee to cover locking (5 TGas) and signing (10 TGas) costs
+    let min_fee = 100_000_000_000_000_000_000; // 0.0001 NEAR
+    if new_fee < min_fee {
+        return Err(RelayerError::FeeTooLow);
+    }
+
+    relayer.base_fee = new_fee;
+    RelayerEvent::BaseFeeUpdated { new_fee }.emit();
+    Ok(())
+}
+
 pub fn pause(relayer: &mut Relayer) -> Result<(), RelayerError> {
     let caller = env::predecessor_account_id();
     if !relayer.is_admin(&caller) {
@@ -275,18 +302,5 @@ pub fn set_max_balance(relayer: &mut Relayer, new_max: u128) -> Result<(), Relay
     }
     relayer.max_balance = new_max;
     RelayerEvent::MaxBalanceUpdated { new_max }.emit();
-    Ok(())
-}
-
-pub fn set_base_fee(relayer: &mut Relayer, new_fee: u128) -> Result<(), RelayerError> {
-    let caller = env::predecessor_account_id();
-    if !relayer.is_admin(&caller) {
-        return Err(RelayerError::Unauthorized);
-    }
-    if new_fee < 100_000_000_000_000_000_000 {
-        return Err(RelayerError::AmountTooLow);
-    }
-    relayer.base_fee = new_fee;
-    RelayerEvent::BaseFeeUpdated { new_fee }.emit();
     Ok(())
 }

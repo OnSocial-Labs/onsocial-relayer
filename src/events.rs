@@ -68,5 +68,7 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     BaseFeeUpdated { new_fee: u128 },
     #[event_version("1.0.0")]
+    FeeCharged { action: String, fee: u128, sender: AccountId },
+    #[event_version("1.0.0")]
     MigrationCompleted { from_version: u64, to_version: u64 },
 }

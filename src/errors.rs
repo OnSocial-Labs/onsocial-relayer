@@ -22,6 +22,8 @@ pub enum RelayerError {
     RateLimitHit,
     KeyExpired,
     InsufficientDeposit,
+    FeeTooLow,
+    InsufficientSignatures,
 }
 
 impl FunctionError for RelayerError {

@@ -53,7 +53,7 @@ impl From<RelayerV1> for Relayer {
             migration_version: 0,
             min_balance: 10_000_000_000_000_000_000_000_000,
             max_balance: 1_000_000_000_000_000_000_000_000_000,
-            base_fee: 1_000_000_000_000_000_000_000,
+            base_fee: 100_000_000_000_000_000_000, // 0.0001 NEAR
             transfer_nonces: LookupMap::new(b"nonces".to_vec()),
         }
     }
@@ -86,7 +86,7 @@ impl Relayer {
             migration_version: 0,
             min_balance: 10_000_000_000_000_000_000_000_000,
             max_balance: 1_000_000_000_000_000_000_000_000_000,
-            base_fee: 1_000_000_000_000_000_000_000,
+            base_fee: 100_000_000_000_000_000_000, // 0.0001 NEAR
             transfer_nonces: LookupMap::new(b"nonces".to_vec()),
         }
     }

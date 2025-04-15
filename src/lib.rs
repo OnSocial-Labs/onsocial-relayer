@@ -173,8 +173,8 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
-    pub fn set_base_fee(&mut self, new_fee: U128) -> Result<(), RelayerError> {
-        admin::set_base_fee(&mut self.relayer, new_fee.0)
+    pub fn set_base_fee(&mut self, new_fee: U128, signatures: Option<Vec<Vec<u8>>>) -> Result<(), RelayerError> {
+        admin::set_base_fee(&mut self.relayer, new_fee.0, signatures)
     }
 
     #[handle_result]
