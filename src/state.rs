@@ -1,12 +1,12 @@
 use near_sdk::{AccountId, env};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::store::{LazyOption, LookupMap, Vector};
+use near_sdk::store::{LazyOption, LookupMap, IterableSet};
 use near_sdk_macros::NearSchema;
 
 #[derive(BorshDeserialize, BorshSerialize, NearSchema)]
 #[abi(borsh)]
 pub struct RelayerV1 {
-    pub admins: Vector<AccountId>,
+    pub admins: IterableSet<AccountId>,
     pub offload_recipient: AccountId,
     pub auth_contract: AccountId,
     pub ft_wrapper_contract: AccountId,
@@ -16,7 +16,7 @@ pub struct RelayerV1 {
 #[derive(BorshDeserialize, BorshSerialize, NearSchema)]
 #[abi(borsh)]
 pub struct Relayer {
-    pub admins: Vector<AccountId>,
+    pub admins: IterableSet<AccountId>,
     pub offload_recipient: AccountId,
     pub auth_contract: AccountId,
     pub ft_wrapper_contract: AccountId,
@@ -66,12 +66,12 @@ impl Relayer {
         auth_contract: AccountId,
         ft_wrapper_contract: AccountId,
     ) -> Self {
-        let mut admin_vec = Vector::new(b"admins".to_vec());
+        let mut admin_set = IterableSet::new(b"admins".to_vec());
         for admin in admins {
-            admin_vec.push(admin);
+            admin_set.insert(admin);
         }
         Self {
-            admins: admin_vec,
+            admins: admin_set,
             offload_recipient,
             auth_contract,
             ft_wrapper_contract,
@@ -92,7 +92,7 @@ impl Relayer {
     }
 
     pub fn is_admin(&self, account_id: &AccountId) -> bool {
-        self.admins.iter().any(|admin| admin == account_id)
+        self.admins.contains(account_id)
     }
 
     pub fn get_next_nonce(&mut self, chain: &str) -> u64 {

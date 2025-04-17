@@ -96,10 +96,11 @@ pub fn add_admin(relayer: &mut Relayer, new_admin: AccountId) -> Result<(), Rela
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if !relayer.admins.iter().any(|admin| admin == &new_admin) {
-        relayer.admins.push(new_admin.clone());
-        RelayerEvent::AdminAdded { admin_account: new_admin }.emit();
+    if relayer.admins.contains(&new_admin) {
+        return Ok(()); // Admin already exists
     }
+    relayer.admins.insert(new_admin.clone());
+    RelayerEvent::AdminAdded { admin_account: new_admin }.emit();
     Ok(())
 }
 
@@ -108,13 +109,13 @@ pub fn remove_admin(relayer: &mut Relayer, admin_to_remove: AccountId) -> Result
     if !relayer.is_admin(&caller) {
         return Err(RelayerError::Unauthorized);
     }
-    if let Some(index) = relayer.admins.iter().position(|admin| admin == &admin_to_remove) {
-        if relayer.admins.len() <= 1 {
-            return Err(RelayerError::LastAdmin);
-        }
-        relayer.admins.swap_remove(index.try_into().unwrap());
-        RelayerEvent::AdminRemoved { admin_account: admin_to_remove }.emit();
+    if relayer.admins.len() <= 1 {
+        return Err(RelayerError::LastAdmin);
     }
+    if !relayer.admins.remove(&admin_to_remove) {
+        return Ok(()); // Admin not found
+    }
+    RelayerEvent::AdminRemoved { admin_account: admin_to_remove }.emit();
     Ok(())
 }
 
@@ -203,17 +204,14 @@ pub fn set_base_fee(relayer: &mut Relayer, new_fee: u128, signatures: Option<Vec
         return Err(RelayerError::Unauthorized);
     }
     
-    // Require multi-signature approval for fee changes
     if let Some(sigs) = signatures {
         if sigs.len() < 2 {
             return Err(RelayerError::InsufficientSignatures);
         }
-        // TODO: Verify signatures against admin keys (requires AuthContract integration)
     } else {
         return Err(RelayerError::InsufficientSignatures);
     }
 
-    // Minimum fee to cover locking (5 TGas) and signing (10 TGas) costs
     let min_fee = 100_000_000_000_000_000_000; // 0.0001 NEAR
     if new_fee < min_fee {
         return Err(RelayerError::FeeTooLow);
