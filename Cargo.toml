@@ -24,9 +24,9 @@ near-crypto = "0.29.2"
 cargo-near = "0.13.6"
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 codegen-units = 1
 lto = true
-debug = false
 panic = "abort"
 overflow-checks = true
+debug = false 

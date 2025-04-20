@@ -1,7 +1,7 @@
 use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, ext_contract, Gas};
 use near_sdk::json_types::U128;
 use near_sdk::{borsh, PanicOnDefault};
-use crate::state::{Relayer, RelayerV1};
+use crate::state::Relayer;
 use crate::types::{SignedDelegateAction, Action};
 use crate::errors::RelayerError;
 use crate::events::RelayerEvent;
@@ -14,6 +14,7 @@ mod admin;
 mod relay;
 mod sponsor;
 mod balance;
+mod state_versions;
 
 #[ext_contract(ext_self)]
 pub trait SelfCallback {
@@ -55,13 +56,12 @@ pub struct OnSocialRelayer {
 impl OnSocialRelayer {
     #[init]
     pub fn new(
-        admins: Vec<AccountId>,
         offload_recipient: AccountId,
         auth_contract: AccountId,
         ft_wrapper_contract: AccountId,
     ) -> Self {
         Self {
-            relayer: Relayer::new(admins, offload_recipient, auth_contract, ft_wrapper_contract),
+            relayer: Relayer::new(env::predecessor_account_id(), offload_recipient, auth_contract, ft_wrapper_contract),
         }
     }
 
@@ -118,16 +118,6 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
-    pub fn add_admin(&mut self, new_admin: AccountId) -> Result<(), RelayerError> {
-        admin::add_admin(&mut self.relayer, new_admin)
-    }
-
-    #[handle_result]
-    pub fn remove_admin(&mut self, admin_to_remove: AccountId) -> Result<(), RelayerError> {
-        admin::remove_admin(&mut self.relayer, admin_to_remove)
-    }
-
-    #[handle_result]
     pub fn set_sponsor_amount(&mut self, new_amount: U128) -> Result<(), RelayerError> {
         admin::set_sponsor_amount(&mut self.relayer, new_amount.0)
     }
@@ -140,6 +130,11 @@ impl OnSocialRelayer {
     #[handle_result]
     pub fn set_cross_contract_gas(&mut self, new_gas: u64) -> Result<(), RelayerError> {
         admin::set_cross_contract_gas(&mut self.relayer, new_gas)
+    }
+
+    #[handle_result]
+    pub fn set_migration_gas(&mut self, new_gas: u64) -> Result<(), RelayerError> {
+        admin::set_migration_gas(&mut self.relayer, new_gas)
     }
 
     #[handle_result]
@@ -178,18 +173,23 @@ impl OnSocialRelayer {
     }
 
     #[handle_result]
-    pub fn pause(&mut self) -> Result<(), RelayerError> {
-        admin::pause(&mut self.relayer)
+    pub fn set_manager(&mut self, new_manager: AccountId) -> Result<(), RelayerError> {
+        admin::set_manager(&mut self.relayer, new_manager)
     }
 
     #[handle_result]
-    pub fn unpause(&mut self) -> Result<(), RelayerError> {
-        admin::unpause(&mut self.relayer)
-    }
-
-    #[handle_result]
-    pub fn migrate(&mut self, target_version: u64, require_pause: bool) -> Result<(), RelayerError> {
-        admin::migrate(&mut self.relayer, target_version, require_pause)
+    pub fn update_contract(&mut self) -> Result<Promise, RelayerError> {
+        let caller = env::predecessor_account_id();
+        if !self.relayer.is_manager(&caller) {
+            return Err(RelayerError::Unauthorized);
+        }
+        let code = env::input().ok_or(RelayerError::MissingInput)?.to_vec();
+        RelayerEvent::ContractUpgraded { manager: caller, timestamp: env::block_timestamp_ms() }.emit();
+        let promise = Promise::new(env::current_account_id())
+            .deploy_contract(code)
+            .function_call("migrate".to_string(), vec![], NearToken::from_yoctonear(0), Gas::from_tgas(self.relayer.migration_gas));
+        env::log_str(&format!("Gas used in update_contract: {} TGas", env::used_gas().as_tgas()));
+        Ok(promise)
     }
 
     #[handle_result]
@@ -226,6 +226,10 @@ impl OnSocialRelayer {
         self.relayer.cross_contract_gas
     }
 
+    pub fn get_migration_gas(&self) -> u64 {
+        self.relayer.migration_gas
+    }
+
     pub fn get_omni_locker_contract(&self) -> AccountId {
         self.relayer.omni_locker_contract.get().clone().map(|x| x.clone()).unwrap_or_else(|| env::current_account_id())
     }
@@ -244,14 +248,6 @@ impl OnSocialRelayer {
 
     pub fn get_base_fee(&self) -> U128 {
         U128(self.relayer.base_fee)
-    }
-
-    pub fn is_paused(&self) -> bool {
-        self.relayer.paused
-    }
-
-    pub fn get_version(&self) -> String {
-        self.relayer.version.clone()
     }
 }
 
@@ -285,16 +281,12 @@ impl OnSocialRelayer {
         if !is_authorized {
             return Err(RelayerError::Unauthorized);
         }
-
         let tx_hash = env::sha256(&borsh::to_vec(&signed_delegate.delegate_action).map_err(|_| RelayerError::InvalidNonce)?);
         relay::verify_signature(&signed_delegate, &tx_hash)?;
-
         let delegate = signed_delegate.delegate_action;
         let action = delegate.actions.first().unwrap();
         let request_id = env::block_timestamp();
-
         let promise = relay::execute_action(&mut self.relayer, action, &sender_id, action.type_name(), Some(request_id))?;
-
         let promise = match action {
             Action::ChainSignatureRequest { target_chain, .. } => {
                 promise.then(
@@ -316,7 +308,6 @@ impl OnSocialRelayer {
                     .handle_bridge_result(sender_id.clone(), action.type_name().to_string(), Vec::new())
             ),
         };
-
         Ok(promise)
     }
 
@@ -332,13 +323,12 @@ impl OnSocialRelayer {
         }
     }
 
-    #[init]
     #[private]
-    pub fn migrate_state() -> Self {
-        let old_state: RelayerV1 = env::state_read().expect("Failed to read old state");
-        let mut relayer = Relayer::from(old_state);
-        relayer.migration_version = 1;
-        Self { relayer }
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        Self {
+            relayer: Relayer::migrate(),
+        }
     }
 }
 

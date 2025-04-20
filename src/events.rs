@@ -36,15 +36,13 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     OffloadRecipientUpdated { new_recipient: AccountId },
     #[event_version("1.0.0")]
-    AdminAdded { admin_account: AccountId },
-    #[event_version("1.0.0")]
-    AdminRemoved { admin_account: AccountId },
-    #[event_version("1.0.0")]
     SponsorAmountUpdated { new_amount: u128 },
     #[event_version("1.0.0")]
     SponsorGasUpdated { new_gas: u64 },
     #[event_version("1.0.0")]
     CrossContractGasUpdated { new_gas: u64 },
+    #[event_version("1.0.0")]
+    MigrationGasUpdated { new_gas: u64 },
     #[event_version("1.0.0")]
     OmniLockerContractUpdated { new_locker_contract: AccountId },
     #[event_version("1.0.0")]
@@ -58,10 +56,6 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     FtWrapperContractUpdated { new_ft_wrapper_contract: AccountId },
     #[event_version("1.0.0")]
-    ContractPaused,
-    #[event_version("1.0.0")]
-    ContractUnpaused,
-    #[event_version("1.0.0")]
     MinBalanceUpdated { new_min: u128 },
     #[event_version("1.0.0")]
     MaxBalanceUpdated { new_max: u128 },
@@ -70,5 +64,9 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     FeeCharged { action: String, fee: u128, sender: AccountId },
     #[event_version("1.0.0")]
-    MigrationCompleted { from_version: u64, to_version: u64 },
+    ManagerChanged { old_manager: AccountId, new_manager: AccountId, timestamp: u64 },
+    #[event_version("1.0.0")]
+    ContractUpgraded { manager: AccountId, timestamp: u64 },
+    #[event_version("1.0.0")]
+    StateMigrated { old_version: String, new_version: String },
 }

@@ -54,27 +54,19 @@ pub fn verify_signature(signed_delegate: &SignedDelegateAction, tx_hash: &[u8]) 
 }
 
 pub fn relay_meta_transaction(relayer: &mut Relayer, signed_delegate: SignedDelegateAction) -> Result<Promise, RelayerError> {
-    if relayer.paused {
-        return Err(RelayerError::ContractPaused);
-    }
     if signed_delegate.delegate_action.actions.len() > 1 {
         return Err(RelayerError::InvalidNonce);
     }
-
     let sender_id = &signed_delegate.delegate_action.sender_id;
     let balance = env::account_balance().as_yoctonear();
     if balance < relayer.min_balance {
         RelayerEvent::LowBalance { balance }.emit();
         return Err(RelayerError::InsufficientBalance);
     }
-
-    // Calculate transaction hash for MPC nonce query
     let tx_hash = env::sha256(&borsh::to_vec(&signed_delegate.delegate_action).map_err(|_| RelayerError::InvalidNonce)?);
     let mpc_contract = relayer.chain_mpc_mapping.get("testnet").cloned().unwrap_or("v1.signer-prod.testnet".parse().unwrap());
-
-    // Query MPC for nonce
     let promise = ext_mpc::ext(mpc_contract)
-        .with_static_gas(Gas::from_tgas(10))
+        .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
         .get_nonce(sender_id.clone(), Base64.encode(tx_hash.clone()))
         .then(
             ext_auth::ext(relayer.auth_contract.clone())
@@ -86,32 +78,26 @@ pub fn relay_meta_transaction(relayer: &mut Relayer, signed_delegate: SignedDele
                 .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
                 .handle_auth_result(sender_id.clone(), signed_delegate.clone(), true)
         );
-
+    env::log_str(&format!("Gas used in relay_meta_transaction: {} TGas", env::used_gas().as_tgas()));
     Ok(promise)
 }
 
 pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<SignedDelegateAction>) -> Result<Vec<Promise>, RelayerError> {
-    if relayer.paused {
-        return Err(RelayerError::ContractPaused);
-    }
     if signed_delegates.is_empty() || signed_delegates.len() > relayer.chunk_size {
         return Err(RelayerError::InvalidNonce);
     }
-
     let balance = env::account_balance().as_yoctonear();
     if balance < relayer.min_balance {
         RelayerEvent::LowBalance { balance }.emit();
         return Err(RelayerError::InsufficientBalance);
     }
-
     let mut promises: Vec<Promise> = Vec::new();
     let mpc_contract = relayer.chain_mpc_mapping.get("testnet").cloned().unwrap_or("v1.signer-prod.testnet".parse().unwrap());
-
     for signed_delegate in signed_delegates {
         let sender_id = &signed_delegate.delegate_action.sender_id;
         let tx_hash = env::sha256(&borsh::to_vec(&signed_delegate.delegate_action).map_err(|_| RelayerError::InvalidNonce)?);
         let promise = ext_mpc::ext(mpc_contract.clone())
-            .with_static_gas(Gas::from_tgas(10))
+            .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
             .get_nonce(sender_id.clone(), Base64.encode(tx_hash))
             .then(
                 ext_auth::ext(relayer.auth_contract.clone())
@@ -125,27 +111,21 @@ pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<Sign
             );
         promises.push(promise);
     }
-
+    env::log_str(&format!("Gas used in relay_meta_transactions: {} TGas", env::used_gas().as_tgas()));
     Ok(promises)
 }
 
 pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<SignedDelegateAction>) -> Result<Vec<Promise>, RelayerError> {
-    if relayer.paused {
-        return Err(RelayerError::ContractPaused);
-    }
     if signed_delegates.is_empty() {
         return Err(RelayerError::InvalidNonce);
     }
-
     let balance = env::account_balance().as_yoctonear();
     if balance < relayer.min_balance {
         RelayerEvent::LowBalance { balance }.emit();
         return Err(RelayerError::InsufficientBalance);
     }
-
     let mpc_contract = relayer.chain_mpc_mapping.get("testnet").cloned().unwrap_or("v1.signer-prod.testnet".parse().unwrap());
     let mut all_promises = Vec::new();
-
     for chunk in signed_delegates.chunks(relayer.chunk_size) {
         let chunk_promises: Vec<Promise> = chunk.iter()
             .map(|signed_delegate| {
@@ -154,7 +134,7 @@ pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: 
                     Ok(payload) => {
                         let tx_hash = env::sha256(&payload);
                         ext_mpc::ext(mpc_contract.clone())
-                            .with_static_gas(Gas::from_tgas(10))
+                            .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
                             .get_nonce(sender_id.clone(), Base64.encode(tx_hash))
                             .then(
                                 ext_auth::ext(relayer.auth_contract.clone())
@@ -172,7 +152,7 @@ pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: 
                             "panic".to_string(),
                             borsh::to_vec(&RelayerError::InvalidNonce).unwrap_or_default(),
                             NearToken::from_yoctonear(0),
-                            Gas::from_tgas(1),
+                            Gas::from_tgas(relayer.cross_contract_gas),
                         )
                     }
                 }
@@ -180,7 +160,7 @@ pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: 
             .collect();
         all_promises.extend(chunk_promises);
     }
-
+    env::log_str(&format!("Gas used in relay_chunked_meta_transactions: {} TGas", env::used_gas().as_tgas()));
     Ok(all_promises)
 }
 
@@ -192,7 +172,6 @@ pub fn execute_action(
     request_id: Option<u64>,
 ) -> Result<Promise, RelayerError> {
     let mut promise = Promise::new(sender_id.clone());
-    
     match action {
         Action::FunctionCall { method_name, args, gas: _, deposit } => {
             promise = promise.function_call(
@@ -262,13 +241,10 @@ pub fn execute_action(
             if attached_deposit < fee {
                 return Err(RelayerError::InsufficientDeposit);
             }
-
-            // Estimate locking and signing costs
             let total_cost = 15_000_000_000_000; // 15 TGas for lock + sign
-            if fee < total_cost / 1_000_000_000_000 * 1_000_000_000_000_000_000_000 { // Convert TGas to yoctoNEAR (approx 1 TGas = 0.001 NEAR)
+            if fee < total_cost / 1_000_000_000_000 * 1_000_000_000_000_000_000_000 {
                 return Err(RelayerError::FeeTooLow);
             }
-
             let nonce = relayer.get_next_nonce(destination_chain);
             let lock_promise = ext_omi_locker::ext(relayer.omni_locker_contract.get().clone().map(|x| x.clone()).unwrap_or_else(|| env::current_account_id()))
                 .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
@@ -296,13 +272,10 @@ pub fn execute_action(
                     NearToken::from_yoctonear(0),
                     Gas::from_tgas(relayer.cross_contract_gas)
                 );
-
-            // Transfer excess fee to offload_recipient
             if attached_deposit > fee {
                 Promise::new(relayer.offload_recipient.clone())
                     .transfer(NearToken::from_yoctonear(attached_deposit - fee));
             }
-
             RelayerEvent::BridgeTransferInitiated {
                 token: token.clone(),
                 amount: *amount,
@@ -316,10 +289,9 @@ pub fn execute_action(
                 fee: fee, 
                 sender: sender_id.clone() 
             }.emit();
-            
             promise = lock_promise.then(sign_promise);
         }
     }
-
+    env::log_str(&format!("Gas used in execute_action: {} TGas", env::used_gas().as_tgas()));
     Ok(promise)
 }
