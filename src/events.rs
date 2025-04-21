@@ -6,6 +6,8 @@ pub enum RelayerEvent {
     #[event_version("1.0.0")]
     LowBalance { balance: u128 },
     #[event_version("1.0.0")]
+    LowGas { remaining_gas: u64 },
+    #[event_version("1.0.0")]
     AccountSponsored { account_id: AccountId },
     #[event_version("1.0.0")]
     AuthAdded { auth_account: AccountId, key_hash: String },
@@ -32,6 +34,15 @@ pub enum RelayerEvent {
         recipient: String, 
         sender: AccountId, 
         signature: Vec<u8> 
+    },
+    #[event_version("1.0.0")]
+    BridgeTransferFailed { 
+        token: String, 
+        amount: U128, 
+        destination_chain: String, 
+        recipient: String, 
+        sender: AccountId, 
+        nonce: u64 
     },
     #[event_version("1.0.0")]
     OffloadRecipientUpdated { new_recipient: AccountId },

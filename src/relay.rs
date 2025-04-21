@@ -1,18 +1,11 @@
 use near_sdk::{Promise, Allowance, NearToken, env, AccountId, Gas};
 use near_sdk::borsh::{self, BorshSerialize, BorshDeserialize};
 use core::num::NonZeroU128;
-use crate::{ext_self, ext_auth, ext_ft_wrapper, ext_omi_locker, state::Relayer, types::{SignedDelegateAction, Action, SignatureScheme}, errors::RelayerError, events::RelayerEvent};
-use near_sdk::ext_contract;
+use crate::{ext_self, ext_auth, ext_ft_wrapper, ext_omi_locker, ext_mpc, state::Relayer, types::{SignedDelegateAction, Action, SignatureScheme}, errors::RelayerError, events::RelayerEvent};
 use near_crypto::{KeyType};
 use ed25519_dalek::{Verifier, Signature as Ed25519Signature, VerifyingKey};
 use base64::engine::general_purpose::STANDARD as Base64;
 use base64::Engine;
-
-#[ext_contract(ext_mpc)]
-#[allow(dead_code)]
-pub trait MpcContract {
-    fn get_nonce(&self, account_id: AccountId, tx_hash: String) -> u64;
-}
 
 #[derive(BorshSerialize, BorshDeserialize)]
 struct SignRequest {
@@ -54,10 +47,15 @@ pub fn verify_signature(signed_delegate: &SignedDelegateAction, tx_hash: &[u8]) 
 }
 
 pub fn relay_meta_transaction(relayer: &mut Relayer, signed_delegate: SignedDelegateAction) -> Result<Promise, RelayerError> {
+    assert!(env::prepaid_gas() >= Gas::from_tgas(250), "Attach at least 250 TGas");
     if signed_delegate.delegate_action.actions.len() > 1 {
         return Err(RelayerError::InvalidNonce);
     }
     let sender_id = &signed_delegate.delegate_action.sender_id;
+    // Verify signer matches sender_id to prevent intermediary manipulation
+    if env::signer_account_id() != *sender_id {
+        return Err(RelayerError::Unauthorized);
+    }
     let balance = env::account_balance().as_yoctonear();
     if balance < relayer.min_balance {
         RelayerEvent::LowBalance { balance }.emit();
@@ -78,11 +76,22 @@ pub fn relay_meta_transaction(relayer: &mut Relayer, signed_delegate: SignedDele
                 .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
                 .handle_auth_result(sender_id.clone(), signed_delegate.clone(), true)
         );
-    env::log_str(&format!("Gas used in relay_meta_transaction: {} TGas", env::used_gas().as_tgas()));
+    let remaining_gas = env::prepaid_gas().as_tgas().saturating_sub(env::used_gas().as_tgas());
+    // Alert if remaining gas is low
+    if remaining_gas < 50 {
+        RelayerEvent::LowGas { remaining_gas }.emit();
+    }
+    env::log_str(&format!(
+        "relay_meta_transaction: prepaid={} TGas, used={} TGas, remaining={} TGas",
+        env::prepaid_gas().as_tgas(),
+        env::used_gas().as_tgas(),
+        remaining_gas
+    ));
     Ok(promise)
 }
 
 pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<SignedDelegateAction>) -> Result<Vec<Promise>, RelayerError> {
+    assert!(env::prepaid_gas() >= Gas::from_tgas(250), "Attach at least 250 TGas");
     if signed_delegates.is_empty() || signed_delegates.len() > relayer.chunk_size {
         return Err(RelayerError::InvalidNonce);
     }
@@ -95,6 +104,10 @@ pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<Sign
     let mpc_contract = relayer.chain_mpc_mapping.get("testnet").cloned().unwrap_or("v1.signer-prod.testnet".parse().unwrap());
     for signed_delegate in signed_delegates {
         let sender_id = &signed_delegate.delegate_action.sender_id;
+        // Verify signer matches sender_id
+        if env::signer_account_id() != *sender_id {
+            return Err(RelayerError::Unauthorized);
+        }
         let tx_hash = env::sha256(&borsh::to_vec(&signed_delegate.delegate_action).map_err(|_| RelayerError::InvalidNonce)?);
         let promise = ext_mpc::ext(mpc_contract.clone())
             .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
@@ -111,11 +124,21 @@ pub fn relay_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<Sign
             );
         promises.push(promise);
     }
-    env::log_str(&format!("Gas used in relay_meta_transactions: {} TGas", env::used_gas().as_tgas()));
+    let remaining_gas = env::prepaid_gas().as_tgas().saturating_sub(env::used_gas().as_tgas());
+    if remaining_gas < 50 {
+        RelayerEvent::LowGas { remaining_gas }.emit();
+    }
+    env::log_str(&format!(
+        "relay_meta_transactions: prepaid={} TGas, used={} TGas, remaining={} TGas",
+        env::prepaid_gas().as_tgas(),
+        env::used_gas().as_tgas(),
+        remaining_gas
+    ));
     Ok(promises)
 }
 
 pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: Vec<SignedDelegateAction>) -> Result<Vec<Promise>, RelayerError> {
+    assert!(env::prepaid_gas() >= Gas::from_tgas(250), "Attach at least 250 TGas");
     if signed_delegates.is_empty() {
         return Err(RelayerError::InvalidNonce);
     }
@@ -130,6 +153,15 @@ pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: 
         let chunk_promises: Vec<Promise> = chunk.iter()
             .map(|signed_delegate| {
                 let sender_id = &signed_delegate.delegate_action.sender_id;
+                // Verify signer matches sender_id
+                if env::signer_account_id() != *sender_id {
+                    return Promise::new(env::current_account_id()).function_call(
+                        "panic".to_string(),
+                        borsh::to_vec(&RelayerError::Unauthorized).unwrap_or_default(),
+                        NearToken::from_yoctonear(0),
+                        Gas::from_tgas(relayer.cross_contract_gas),
+                    );
+                }
                 match borsh::to_vec(&signed_delegate.delegate_action) {
                     Ok(payload) => {
                         let tx_hash = env::sha256(&payload);
@@ -160,7 +192,16 @@ pub fn relay_chunked_meta_transactions(relayer: &mut Relayer, signed_delegates: 
             .collect();
         all_promises.extend(chunk_promises);
     }
-    env::log_str(&format!("Gas used in relay_chunked_meta_transactions: {} TGas", env::used_gas().as_tgas()));
+    let remaining_gas = env::prepaid_gas().as_tgas().saturating_sub(env::used_gas().as_tgas());
+    if remaining_gas < 50 {
+        RelayerEvent::LowGas { remaining_gas }.emit();
+    }
+    env::log_str(&format!(
+        "relay_chunked_meta_transactions: prepaid={} TGas, used={} TGas, remaining={} TGas",
+        env::prepaid_gas().as_tgas(),
+        env::used_gas().as_tgas(),
+        remaining_gas
+    ));
     Ok(all_promises)
 }
 
@@ -171,6 +212,8 @@ pub fn execute_action(
     _action_type: &str,
     request_id: Option<u64>,
 ) -> Result<Promise, RelayerError> {
+    assert!(env::prepaid_gas() >= Gas::from_tgas(250), "Attach at least 250 TGas");
+    let initial_storage = env::storage_usage();
     let mut promise = Promise::new(sender_id.clone());
     match action {
         Action::FunctionCall { method_name, args, gas: _, deposit } => {
@@ -212,40 +255,43 @@ pub fn execute_action(
         }
         Action::FtTransfer { token, receiver_id, amount, memo } => {
             let sender_promise = ext_ft_wrapper::ext(relayer.ft_wrapper_contract.clone())
-                .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
+                .with_static_gas(Gas::from_tgas(100))
                 .is_registered(token.clone(), sender_id.clone())
                 .then(
                     ext_self::ext(env::current_account_id())
-                        .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
+                        .with_static_gas(Gas::from_tgas(100))
                         .handle_registration(sender_id.clone(), token.clone(), true, true)
                 );
             let receiver_promise = ext_ft_wrapper::ext(relayer.ft_wrapper_contract.clone())
-                .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
+                .with_static_gas(Gas::from_tgas(100))
                 .is_registered(token.clone(), receiver_id.clone())
                 .then(
                     ext_self::ext(env::current_account_id())
-                        .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
+                        .with_static_gas(Gas::from_tgas(100))
                         .handle_registration(receiver_id.clone(), token.clone(), false, true)
                 );
             promise = sender_promise
-                .and(receiver_promise)
+                .then(receiver_promise)
                 .then(
                     ext_ft_wrapper::ext(relayer.ft_wrapper_contract.clone())
-                        .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
+                        .with_static_gas(Gas::from_tgas(100))
                         .ft_transfer(token.clone(), receiver_id.clone(), *amount, memo.clone())
                 );
         }
         Action::BridgeTransfer { token, amount, destination_chain, recipient } => {
             let fee = relayer.base_fee;
-            let attached_deposit = env::attached_deposit().as_yoctonear();
-            if attached_deposit < fee {
-                return Err(RelayerError::InsufficientDeposit);
+            let balance = env::account_balance().as_yoctonear();
+            // Check if relayer can cover the fee
+            if balance < relayer.min_balance + fee {
+                RelayerEvent::LowBalance { balance }.emit();
+                return Err(RelayerError::InsufficientBalance);
             }
             let total_cost = 15_000_000_000_000; // 15 TGas for lock + sign
-            if fee < total_cost / 1_000_000_000_000 * 1_000_000_000_000_000_000_000 {
+            if fee > 0 && fee < total_cost / 1_000_000_000_000 * 1_000_000_000_000_000_000_000 {
                 return Err(RelayerError::FeeTooLow);
             }
-            let nonce = relayer.get_next_nonce(destination_chain);
+            // Store pending transfer instead of incrementing nonce immediately
+            let nonce = relayer.get_pending_nonce(destination_chain);
             let lock_promise = ext_omi_locker::ext(relayer.omni_locker_contract.get().clone().map(|x| x.clone()).unwrap_or_else(|| env::current_account_id()))
                 .with_static_gas(Gas::from_tgas(relayer.cross_contract_gas))
                 .lock(token.clone(), *amount, destination_chain.clone(), recipient.clone());
@@ -272,10 +318,16 @@ pub fn execute_action(
                     NearToken::from_yoctonear(0),
                     Gas::from_tgas(relayer.cross_contract_gas)
                 );
-            if attached_deposit > fee {
-                Promise::new(relayer.offload_recipient.clone())
-                    .transfer(NearToken::from_yoctonear(attached_deposit - fee));
-            }
+            // Store pending transfer
+            relayer.add_pending_transfer(
+                destination_chain.clone(),
+                nonce,
+                sender_id.clone(),
+                token.clone(),
+                *amount,
+                recipient.clone(),
+                fee,
+            );
             RelayerEvent::BridgeTransferInitiated {
                 token: token.clone(),
                 amount: *amount,
@@ -286,12 +338,30 @@ pub fn execute_action(
             }.emit();
             RelayerEvent::FeeCharged { 
                 action: "BridgeTransfer".to_string(), 
-                fee: fee, 
+                fee, 
                 sender: sender_id.clone() 
             }.emit();
             promise = lock_promise.then(sign_promise);
         }
     }
-    env::log_str(&format!("Gas used in execute_action: {} TGas", env::used_gas().as_tgas()));
+    // Check storage cost
+    let storage_used = env::storage_usage() - initial_storage;
+    let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+    if env::account_balance().as_yoctonear() < relayer.min_balance + storage_cost {
+        RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+        return Err(RelayerError::InsufficientBalance);
+    }
+    let remaining_gas = env::prepaid_gas().as_tgas().saturating_sub(env::used_gas().as_tgas());
+    if remaining_gas < 50 {
+        RelayerEvent::LowGas { remaining_gas }.emit();
+    }
+    env::log_str(&format!(
+        "execute_action: prepaid={} TGas, used={} TGas, remaining={} TGas, storage_used={} bytes, storage_cost={} yoctoNEAR",
+        env::prepaid_gas().as_tgas(),
+        env::used_gas().as_tgas(),
+        remaining_gas,
+        storage_used,
+        storage_cost
+    ));
     Ok(promise)
 }

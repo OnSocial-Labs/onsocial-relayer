@@ -1,4 +1,4 @@
-use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, ext_contract, Gas};
+use near_sdk::{near, AccountId, Promise, PublicKey, NearToken, env, ext_contract, Gas, PromiseError};
 use near_sdk::json_types::U128;
 use near_sdk::{borsh, PanicOnDefault};
 use crate::state::Relayer;
@@ -18,9 +18,9 @@ mod state_versions;
 
 #[ext_contract(ext_self)]
 pub trait SelfCallback {
-    fn handle_mpc_signature(&mut self, chain: String, request_id: u64, result: Vec<u8>);
-    fn handle_bridge_result(&mut self, sender_id: AccountId, action_type: String, result: Vec<u8>);
-    fn handle_bridge_transfer_result(&mut self, sender_id: AccountId, token: String, amount: U128, destination_chain: String, recipient: String, signature: Vec<u8>);
+    fn handle_mpc_signature(&mut self, chain: String, request_id: u64, result: Vec<u8>, #[callback_result] call_result: Result<(), PromiseError>);
+    fn handle_bridge_result(&mut self, sender_id: AccountId, action_type: String, result: Vec<u8>, #[callback_result] call_result: Result<(), PromiseError>);
+    fn handle_bridge_transfer_result(&mut self, sender_id: AccountId, token: String, amount: U128, destination_chain: String, recipient: String, signature: Vec<u8>, #[callback_result] call_result: Result<(), PromiseError>);
     #[handle_result]
     fn handle_auth_result(&mut self, sender_id: AccountId, signed_delegate: SignedDelegateAction, is_authorized: bool) -> Result<Promise, RelayerError>;
     fn handle_registration(&mut self, account_id: AccountId, token: String, is_sender: bool, is_registered: bool) -> Promise;
@@ -44,6 +44,11 @@ pub trait FtWrapperContract {
 #[ext_contract(ext_omi_locker)]
 pub trait OmniLocker {
     fn lock(&mut self, token: String, amount: U128, destination_chain: String, recipient: String);
+}
+
+#[ext_contract(ext_mpc)]
+pub trait MpcContract {
+    fn get_nonce(&self, account_id: AccountId, tx_hash: String) -> u64;
 }
 
 #[near(contract_state)]
@@ -104,77 +109,212 @@ impl OnSocialRelayer {
 
     #[handle_result]
     pub fn register_existing_account(&mut self, account_id: AccountId, public_key: PublicKey, expiration_days: Option<u32>, is_multi_sig: bool, multi_sig_threshold: Option<u32>) -> Result<(), RelayerError> {
-        admin::register_existing_account(&mut self.relayer, account_id, public_key, expiration_days, is_multi_sig, multi_sig_threshold)
+        let initial_storage = env::storage_usage();
+        let result = admin::register_existing_account(&mut self.relayer, account_id, public_key, expiration_days, is_multi_sig, multi_sig_threshold);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("register_existing_account: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn remove_key(&mut self, account_id: AccountId, public_key: PublicKey) -> Result<(), RelayerError> {
-        admin::remove_key(&mut self.relayer, account_id, public_key)
+        let initial_storage = env::storage_usage();
+        let result = admin::remove_key(&mut self.relayer, account_id, public_key);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("remove_key: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_offload_recipient(&mut self, new_recipient: AccountId) -> Result<(), RelayerError> {
-        admin::set_offload_recipient(&mut self.relayer, new_recipient)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_offload_recipient(&mut self.relayer, new_recipient);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_offload_recipient: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_sponsor_amount(&mut self, new_amount: U128) -> Result<(), RelayerError> {
-        admin::set_sponsor_amount(&mut self.relayer, new_amount.0)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_sponsor_amount(&mut self.relayer, new_amount.0);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_sponsor_amount: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_sponsor_gas(&mut self, new_gas: u64) -> Result<(), RelayerError> {
-        admin::set_sponsor_gas(&mut self.relayer, new_gas)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_sponsor_gas(&mut self.relayer, new_gas);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_sponsor_gas: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_cross_contract_gas(&mut self, new_gas: u64) -> Result<(), RelayerError> {
-        admin::set_cross_contract_gas(&mut self.relayer, new_gas)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_cross_contract_gas(&mut self.relayer, new_gas);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_cross_contract_gas: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_migration_gas(&mut self, new_gas: u64) -> Result<(), RelayerError> {
-        admin::set_migration_gas(&mut self.relayer, new_gas)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_migration_gas(&mut self.relayer, new_gas);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_migration_gas: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_omni_locker_contract(&mut self, new_locker_contract: AccountId) -> Result<(), RelayerError> {
-        admin::set_omni_locker_contract(&mut self.relayer, new_locker_contract)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_omni_locker_contract(&mut self.relayer, new_locker_contract);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_omni_locker_contract: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn add_chain_mpc_mapping(&mut self, chain: String, mpc_contract: AccountId) -> Result<(), RelayerError> {
-        admin::add_chain_mpc_mapping(&mut self.relayer, chain, mpc_contract)
+        let initial_storage = env::storage_usage();
+        let result = admin::add_chain_mpc_mapping(&mut self.relayer, chain, mpc_contract);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("add_chain_mpc_mapping: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn remove_chain_mpc_mapping(&mut self, chain: String) -> Result<(), RelayerError> {
-        admin::remove_chain_mpc_mapping(&mut self.relayer, chain)
+        let initial_storage = env::storage_usage();
+        let result = admin::remove_chain_mpc_mapping(&mut self.relayer, chain);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("remove_chain_mpc_mapping: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_chunk_size(&mut self, new_size: usize) -> Result<(), RelayerError> {
-        admin::set_chunk_size(&mut self.relayer, new_size)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_chunk_size(&mut self.relayer, new_size);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_chunk_size: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_auth_contract(&mut self, new_auth_contract: AccountId) -> Result<(), RelayerError> {
-        admin::set_auth_contract(&mut self.relayer, new_auth_contract)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_auth_contract(&mut self.relayer, new_auth_contract);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_auth_contract: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_ft_wrapper_contract(&mut self, new_ft_wrapper_contract: AccountId) -> Result<(), RelayerError> {
-        admin::set_ft_wrapper_contract(&mut self.relayer, new_ft_wrapper_contract)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_ft_wrapper_contract(&mut self.relayer, new_ft_wrapper_contract);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_ft_wrapper_contract: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_base_fee(&mut self, new_fee: U128, signatures: Option<Vec<Vec<u8>>>) -> Result<(), RelayerError> {
-        admin::set_base_fee(&mut self.relayer, new_fee.0, signatures)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_base_fee(&mut self.relayer, new_fee.0, signatures);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_base_fee: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_manager(&mut self, new_manager: AccountId) -> Result<(), RelayerError> {
-        admin::set_manager(&mut self.relayer, new_manager)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_manager(&mut self.relayer, new_manager);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_manager: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
@@ -194,12 +334,30 @@ impl OnSocialRelayer {
 
     #[handle_result]
     pub fn set_min_balance(&mut self, new_min: U128) -> Result<(), RelayerError> {
-        admin::set_min_balance(&mut self.relayer, new_min.0)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_min_balance(&mut self.relayer, new_min.0);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_min_balance: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     #[handle_result]
     pub fn set_max_balance(&mut self, new_max: U128) -> Result<(), RelayerError> {
-        admin::set_max_balance(&mut self.relayer, new_max.0)
+        let initial_storage = env::storage_usage();
+        let result = admin::set_max_balance(&mut self.relayer, new_max.0);
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = storage_used as u128 * env::storage_byte_cost().as_yoctonear();
+        if env::account_balance().as_yoctonear() < self.relayer.min_balance + storage_cost {
+            RelayerEvent::LowBalance { balance: env::account_balance().as_yoctonear() }.emit();
+            return Err(RelayerError::InsufficientBalance);
+        }
+        env::log_str(&format!("set_max_balance: storage_used={} bytes, storage_cost={} yoctoNEAR", storage_used, storage_cost));
+        result
     }
 
     pub fn get_balance(&self) -> U128 {
@@ -254,17 +412,61 @@ impl OnSocialRelayer {
 #[near]
 impl OnSocialRelayer {
     #[private]
-    pub fn handle_mpc_signature(&mut self, chain: String, request_id: u64, result: Vec<u8>) {
+    pub fn handle_mpc_signature(&mut self, chain: String, request_id: u64, result: Vec<u8>, #[callback_result] call_result: Result<(), PromiseError>) {
+        if call_result.is_err() {
+            env::log_str(&format!("MPC signature failed for chain {} request_id {}", chain, request_id));
+            // No state changes to revert, just emit event
+            RelayerEvent::CrossChainSignatureResult { chain, request_id, result: vec![] }.emit();
+            return;
+        }
         RelayerEvent::CrossChainSignatureResult { chain, request_id, result }.emit();
     }
 
     #[private]
-    pub fn handle_bridge_result(&mut self, sender_id: AccountId, action_type: String, result: Vec<u8>) {
+    pub fn handle_bridge_result(&mut self, sender_id: AccountId, action_type: String, result: Vec<u8>, #[callback_result] call_result: Result<(), PromiseError>) {
+        if call_result.is_err() {
+            env::log_str(&format!("Bridge action {} failed for sender {}", action_type, sender_id));
+            // No state changes to revert, just emit event
+            RelayerEvent::BridgeResult { sender_id, action_type, result: vec![] }.emit();
+            return;
+        }
         RelayerEvent::BridgeResult { sender_id, action_type, result }.emit();
     }
 
     #[private]
-    pub fn handle_bridge_transfer_result(&mut self, sender_id: AccountId, token: String, amount: U128, destination_chain: String, recipient: String, signature: Vec<u8>) {
+    pub fn handle_bridge_transfer_result(
+        &mut self,
+        sender_id: AccountId,
+        token: String,
+        amount: U128,
+        destination_chain: String,
+        recipient: String,
+        signature: Vec<u8>,
+        #[callback_result] call_result: Result<(), PromiseError>,
+    ) {
+        let nonce = self.relayer.get_pending_nonce(&destination_chain);
+        if call_result.is_err() {
+            env::log_str(&format!("Bridge transfer failed for sender {} to chain {}", sender_id, destination_chain));
+            // Revert pending transfer and refund fee
+            if let Some(pending) = self.relayer.revert_pending_transfer(&destination_chain, nonce) {
+                if pending.fee > 0 {
+                    Promise::new(sender_id.clone())
+                        .transfer(NearToken::from_yoctonear(pending.fee));
+                    env::log_str(&format!("Refunded {} yoctoNEAR to {}", pending.fee, sender_id));
+                }
+            }
+            RelayerEvent::BridgeTransferFailed {
+                token,
+                amount,
+                destination_chain,
+                recipient,
+                sender: sender_id,
+                nonce,
+            }.emit();
+            return;
+        }
+        // Confirm transfer and update nonce
+        self.relayer.confirm_pending_transfer(&destination_chain, nonce);
         RelayerEvent::BridgeTransferCompleted {
             token,
             amount,
